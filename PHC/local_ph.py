@@ -17,7 +17,7 @@ class PHC:
         Determines which method of persistence to compute
 
     window_size : int
-        Localizes computations to (n,n) subwindow of the orginal image
+        Localizes computations to a subwindow of the orginal image
 
     stride : int
         Value used to translate subwindow across the image
