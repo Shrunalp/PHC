@@ -1,6 +1,9 @@
+"""
+Helper functions
+"""
 import numpy as np
 
-def noise_pts(pd: np.ndarray) -> np.ndarray:
+def remove_noisy_pts(pd: np.ndarray) -> np.ndarray:
         
         """
         Used to simplify persistent diagrams from holes created at the pixel level
