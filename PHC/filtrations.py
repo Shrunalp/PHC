@@ -4,7 +4,7 @@ A collection of filtration based methods for computing persistence
 import numpy as np
 import gudhi as gd
 from gudhi import CubicalComplex, AlphaComplex
-from .utils import pointcloud2D
+from .utils import pointcloud2D, remove_noisy_pts
 
 
 def alphacomplex(img: np.ndarray, alpha_value: float = None) -> list[np.ndarray]:
@@ -33,6 +33,7 @@ def alphacomplex(img: np.ndarray, alpha_value: float = None) -> list[np.ndarray]
     
     SimplexTree.persistence()
     dgm = SimplexTree.persistence_intervals_in_dimension(1)
+    dgm = remove_noisy_pts(dgm)
     return [dgm]
 
 def cubicalcomplex(img: np.ndarray) -> list[np.ndarray]:
@@ -61,7 +62,7 @@ def ext_persistence(img: np.ndarray, filtration_function: str = "pixel_intensity
     """
     Parameters
     -----------
-    img : np.ndarray of float - size (n,n)
+    img : np.ndarray of float 
         greyscaled pathology slide, must be depth one or zero
 
     filtration_function : string
