@@ -2,11 +2,8 @@
 A collection of filtration based methods for computing persistence
 """
 import numpy as np
-from ripser import lower_star_img
-import PIL
 import gudhi as gd
 from gudhi import CubicalComplex, AlphaComplex
-from scipy import ndimage
 from .utils import pointcloud2D
 
 

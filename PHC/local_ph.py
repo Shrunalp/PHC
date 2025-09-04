@@ -6,7 +6,6 @@ from gudhi.representations import Silhouette
 from gudhi.representations import PersistenceImage
 import numpy as np
 from .filtrations import *
-from .utils import pointcloud2D
 
 class PHC:
 
