@@ -1,0 +1,8 @@
+keras==3.5.0
+numpy==1.23.5
+tensorflow==2.17.0
+tensorflow-metal==1.0.1
+wandb==0.16.1
+gudhi==3.9.0
+scikit-learn==1.5.1
+opencv-python==4.5.5.64
