@@ -1,5 +1,5 @@
 # Classification of Histopathology Slides with Persistent Homology Convolutions
-GitHub respository for those interested in generating data that captures localized peristence of micrographs or any general image data 
+GitHub respository for those interested in generating data that captures localized peristence of biological micrographs or any general image data 
 
 ![alt text](https://github.com/Shrunalp/PHC/blob/main/PHC_visual.png?raw=true#center)
 
@@ -19,3 +19,5 @@ gh repo clone Shrunalp/PHC
 
 
 ## Tutorial 
+
+Check out our notebook ```PHC_tutorial.ipynb``` to get started!
