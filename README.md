@@ -9,7 +9,7 @@ Convolutional neural networks (CNNs) are a standard tool for computer vision tas
 
 ## Installation
 
-Clone the Github repoistory:
+Clone the Github repository:
 ```
 git clone https://github.com/Shrunalp/PHC.git
 ```
@@ -18,6 +18,11 @@ or using Git CLI
 gh repo clone Shrunalp/PHC
 ```
 
+Create your own python environment and install the required packages:
+
+```
+pip install -r requirements.txt
+```
 
 ## Tutorial 
 
