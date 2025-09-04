@@ -1,5 +1,6 @@
 # Classification of Histopathology Slides with Persistent Homology Convolutions
-GitHub respository for those interested in generating data that captures localized peristence of biological micrographs or any general image data 
+GitHub respository for those interested in generating data that captures localized peristence of biological micrographs or any general image data.
+Check out the corresponding paper at: https://arxiv.org/abs/2507.14378
 
 ![alt text](https://github.com/Shrunalp/PHC/blob/main/PHC_visual.png?raw=true#center)
 
