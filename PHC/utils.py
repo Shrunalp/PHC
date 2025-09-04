@@ -1,6 +1,6 @@
 import numpy as np
 
-def noise_pts(pd: np.ndarray):
+def noise_pts(pd: np.ndarray) -> np.ndarray:
         
         """
         Used to simplify persistent diagrams from holes created at the pixel level
@@ -21,7 +21,7 @@ def noise_pts(pd: np.ndarray):
         denoised_pd = pd[mask]
         return denoised_pd
 
-def pointcloud2D(dilated_img: np.ndarray):
+def pointcloud2D(dilated_img: np.ndarray) -> np.ndarray:
 
     """
     Only needed if filtration used is the alpha complex
@@ -34,8 +34,9 @@ def pointcloud2D(dilated_img: np.ndarray):
     Returns
     --------
     pointcloud : np.ndarray of int - size (m,2)
-        coordinate positions of nonzero greyscale pixels 
+        2D pointcloud used to represent boundary of cells in pathology images
     """
 
-    pointcloud = np.column_stack(np.where(dilated_img >= 0))
+    y_coords, x_coords = np.where(dilated_img > 0)
+    pointcloud = np.column_stack((x_coords, y_coords))
     return pointcloud

@@ -33,7 +33,7 @@ class PHC:
 
     def __init__(
             self, 
-            persistence_type: str = "alpha", 
+            persistence_type: str = "cube", 
             window_size: int = 32, 
             stride: int = 32, 
             vectorization: str = "PI", 
@@ -45,7 +45,7 @@ class PHC:
         self.vectorization = vectorization
         self.vector_resolution = vector_resolution
         
-    def process_window(self, img: np.ndarray, x_cord: int, y_cord: int, window_width: int, window_length: int):
+    def process_window(self, img: np.ndarray, x_cord: int, y_cord: int, window_width: int, window_length: int) -> np.ndarray:
 
         """
         Parameters
@@ -71,14 +71,15 @@ class PHC:
             vectorized representation of local persistent homology data
         """
 
-        img = img[x_cord:x_cord+window_width, y_cord:y_cord+window_length]
-        if self.persistence_type == "alpha":
-            points = pointcloud2D(img) #condition image before inputting
-            pd = alphacomplex(points)
-        elif self.persistence_type == "lower_star":
-            pd = lower_star(img)
+        subimg = img[x_cord:x_cord+window_width, y_cord:y_cord+window_length]
+        if self.persistence_type == "cubical":
+            pd = cubicalcomplex(subimg)
+        elif self.persistence_type == "alpha":
+            pd = alphacomplex(subimg)
         elif self.persistence_type == "extended":
-            pd = ext_persistence(img) #condition image before inputting
+            pd = ext_persistence(subimg) #condition image before inputting
+        else:
+            raise ValueError("Unknown Persistence Method.")
 
 
         if self.vectorization == "PL":
@@ -92,7 +93,7 @@ class PHC:
         return vectorized_pd
 
 
-    def convolve(self, img: np.ndarray):
+    def convolve(self, img: np.ndarray) -> list[np.ndarray]:
 
         """
         Parameters

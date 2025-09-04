@@ -5,20 +5,20 @@ import numpy as np
 from ripser import lower_star_img
 import PIL
 import gudhi as gd
-from gudhi import AlphaComplex
+from gudhi import CubicalComplex, AlphaComplex
 from scipy import ndimage
-from .utils import noise_pts
+from .utils import pointcloud2D
 
 
-def lower_star(img, smoothing_factor: float = 0.01):
+def alphacomplex(img: np.ndarray, alpha_value: float = None) -> list[np.ndarray]:
 
     """
     Parameters
     -----------
-    img : np.ndarray of float - size (n,n)
+    img : np.ndarray of float 
         greyscaled pathology slide, must be depth one or zero
         
-    smoothing_factor : float 
+    alpha_value : float 
         used to smooth greyscaled image to reduce topological noise
 
     Returns
@@ -26,36 +26,40 @@ def lower_star(img, smoothing_factor: float = 0.01):
     dgm : list of an array of size (n,2)
         persistence diagram of codim one using Alexander Duality to detect cell formation
     """
+    points = pointcloud2D(img)
+    alpha_complex = AlphaComplex(points=points)
     
-    cells_grey = np.asarray(PIL.Image.fromarray(img).convert('L'))
-    smoothed = ndimage.uniform_filter(cells_grey.astype(np.float64), size=10)
-    smoothed += smoothing_factor * np.random.randn(*smoothed.shape)
-    dgm = lower_star_img(-smoothed) # persistence 
-    dgm[-1][-1] = 750 #Replace np.inf
+    if alpha_value is None:
+        SimplexTree = alpha_complex.create_simplex_tree()
+    else:
+        SimplexTree = alpha_complex.create_simplex_tree(max_alpha_square=alpha_value**2)
+    
+    SimplexTree.persistence()
+    dgm = SimplexTree.persistence_intervals_in_dimension(1)
     return [dgm]
 
-def alphacomplex(pointcloud):
+def cubicalcomplex(img: np.ndarray) -> list[np.ndarray]:
 
     """
     Parameters
     -----------
-    pointcloud : np.ndarray of float - size (n,2)
-        2D pointcloud used to represent spatial distance between cells in pathology images
+    img : np.ndarray of float 
+        greyscaled pathology slide, must be depth one or zero 
 
     Returns
     --------
     dgm : list of an array of size (n,2)
-        dim one persistence diagram generated from the alpha complex
+        dim one persistence diagram generated from the cubical complex using lowerstar filtration
     """
 
-    SimplexTree = AlphaComplex(pointcloud).create_simplex_tree() 
-    SimplexTree.persistence() 
-    dgm = np.array(SimplexTree.persistence_intervals_in_dimension(1))
-    dgm = noise_pts(dgm) #remove noise generated on the pixel level
+    cubical_complex = CubicalComplex(dimensions=img.shape,
+                                       top_dimensional_cells=img.flatten()) 
+    cubical_complex.persistence(homology_coeff_field=2, min_persistence=0.01)
+    dgm = np.array(cubical_complex.persistence_intervals_in_dimension(1))
     dgm = [dgm]
     return dgm
 
-def ext_persistence(img, filtration_function: str = "height_function"):
+def ext_persistence(img: np.ndarray, filtration_function: str = "pixel_intensity") -> list[np.ndarray]:
     
     """
     Parameters
@@ -64,7 +68,7 @@ def ext_persistence(img, filtration_function: str = "height_function"):
         greyscaled pathology slide, must be depth one or zero
 
     filtration_function : string
-        choice in filtration between pixel_intensity and height_function
+        choice in filtration, pixel_intensity is choosen as default 
 
     Returns
     --------

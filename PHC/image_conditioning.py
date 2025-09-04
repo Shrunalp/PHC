@@ -34,7 +34,7 @@ class preprocess:
         self.iterate = iterate
         
         
-    def threshold(self, img: np.ndarray):
+    def threshold(self, img: np.ndarray) -> np.ndarray:
 
         """
         Parameters
@@ -51,7 +51,7 @@ class preprocess:
         thresh_img = np.where(img <= self.thresh, img, 0) 
         return thresh_img
 
-    def dilate(self, thresh_img: np.ndarray):
+    def dilate(self, thresh_img: np.ndarray) -> np.ndarray:
 
         """
         Parameters
