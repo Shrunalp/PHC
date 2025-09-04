@@ -26,4 +26,5 @@ Check out our notebook ```PHC_tutorial.ipynb``` to get started!
 ## Authors
 
 Shrunal Pothagoni - spothago@gmu.edu
+
 Benjamin Schweinhart - bschwei@gmu.edu
