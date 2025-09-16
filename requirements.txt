@@ -6,3 +6,4 @@ wandb==0.16.1
 gudhi==3.11.0
 scikit-learn==1.5.1
 opencv-python==4.5.5.64
+tqdm==4.64.0
