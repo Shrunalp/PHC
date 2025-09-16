@@ -26,7 +26,7 @@ python -m venv phc-venv
 ```
 pip install -r requirements.txt
 ```
-# Note that tensorflow-metal is only required for M1 (or greater) MacBook users
+### Note that tensorflow-metal is only required for M1 (or greater) MacBook users
 
 ## Tutorial 
 
