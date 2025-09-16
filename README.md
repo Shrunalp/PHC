@@ -8,6 +8,7 @@ Check out the corresponding paper at: https://arxiv.org/abs/2507.14378
 Convolutional neural networks (CNNs) are a standard tool for computer vision tasks such as image classification. However, typical model architectures may result in the loss of topological information. In specific domains such as histopathology, topology is an important descriptor that can be used to distinguish between disease-indicating tissue by analyzing the shape characteristics of cells. Current literature suggests that reintroducing topological information using persistent homology can improve medical diagnostics; however, previous methods utilize global topological summaries which do not contain information about the locality of topological features. To address this gap, we present a novel method that generates local persistent homology-based data using a modified version of the convolution operator called Persistent Homology Convolutions. This method captures information about the locality and translation invariance of topological features. We perform a comparative study using various representations of histopathology slides and find that models trained with persistent homology convolutions outperform conventionally trained models and are less sensitive to hyperparameters. These results indicate that persistent homology convolutions extract meaningful geometric information from the histopathology slides.
 
 ## Installation
+### Note that tensorflow-metal is only required for M1 (or greater) MacBook users
 
 Clone the Github repository:
 ```
@@ -18,15 +19,18 @@ or using Git CLI
 gh repo clone Shrunalp/PHC
 ```
 
-Requires python 3.10 or greater. Create your own python environment and install the required packages:
+Requires python 3.10 or greater. Create your own python environment 
 
 ```
 python -m venv phc-venv 
 ```
+
+and install the required packages. 
+
 ```
 pip install -r requirements.txt
 ```
-### Note that tensorflow-metal is only required for M1 (or greater) MacBook users
+
 
 ## Tutorial 
 
