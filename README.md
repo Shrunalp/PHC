@@ -21,7 +21,9 @@ gh repo clone Shrunalp/PHC
 Requires python 3.10 or greater. Create your own python environment and install the required packages:
 
 ```
-python -m venv phc-venv
+python -m venv phc-venv #or any other name
+```
+```
 pip install -r requirements.txt
 ```
 
