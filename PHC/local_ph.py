@@ -28,21 +28,25 @@ class PHC:
     vector_resolution : int
         Fixes the dimension output in the vectorization of the persistence diagrams
 
+    dimension : int
+        Computes persistence in dimension n
     """
 
     def __init__(
             self, 
-            persistence_type: str = "cube", 
+            persistence_type: str = "alpha", 
             window_size: int = 32, 
             stride: int = 32, 
             vectorization: str = "PI", 
-            vector_resolution: int = 20
+            vector_resolution: int = 20,
+            dimension: int = 1
             ):
         self.persistence_type = persistence_type
         self.window_size = window_size
         self.stride =  stride
         self.vectorization = vectorization
         self.vector_resolution = vector_resolution
+        self.dim = dimension
         
     def process_window(self, img: np.ndarray, x_cord: int, y_cord: int, window_width: int, window_length: int) -> np.ndarray:
 
@@ -71,12 +75,20 @@ class PHC:
         """
 
         subimg = img[x_cord:x_cord+window_width, y_cord:y_cord+window_length]
-        if self.persistence_type == "cubical":
-            pd = cubicalcomplex(subimg)
+        if self.persistence_type == "lower_star":
+            pd = lower_star(subimg, dim=self.dim)
+        elif self.persistence_type == "ext_lower_star":
+            pd = lower_star(subimg, dim=self.dim, persistence_type="Extended")
         elif self.persistence_type == "alpha":
-            pd = alphacomplex(subimg)
-        elif self.persistence_type == "extended":
-            pd = ext_persistence(subimg) #condition image before inputting
+            pd = alphacomplex(subimg, dim=self.dim)
+        elif self.persistence_type == "ext_alpha":
+            pd = alphacomplex(subimg, dim=self.dim, persistence_type="Extended")
+        elif self.persistence_type == "adj_complex":
+            pd = adj_complex(subimg, dim=self.dim) #condition image before inputting
+        elif self.persistence_type == "ext_adj_complex":
+            pd = adj_complex(subimg, dim=self.dim, persistence_type="Extended")
+        elif self.persistence_type == "cubical_complex":
+            pd = cubicalcomplex(subimg, dim=self.dim)       
         else:
             raise ValueError("Unknown Persistence Method.")
 
