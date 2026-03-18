@@ -15,10 +15,6 @@ DATA_DIR = "PHC_data"
 IMG_DIR = "grey_ost_img"
 
 def get_file_path(dim: str, dataset_class: str) -> str:
-    """
-    Constructs the filename dynamically.
-    Format example: 0_alpha_PHC_data_t180.npy
-    """
     
     filename = f"{dim}_{dataset_class}_PHC_data_t195.npy"
     return os.path.join(DATA_DIR, filename)
