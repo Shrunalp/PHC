@@ -60,7 +60,7 @@ def load_data(config):
     #Split labels
     _, _, y_train, y_test = train_test_split(lb, lb, test_size=0.2, random_state=42)
 
-    # 5. Assemble Inputs List based on Mode
+    #Assemble Inputs List based on Mode
     inputs_train = []
     inputs_test = []
     
