@@ -114,7 +114,7 @@ def lower_star(img: np.ndarray, dim: int = 1, persistence_type: str = None) -> l
             edge_filt = min(pixel_vals) if pixel_vals else 0.0
             SimplexTree.insert([u, v], filtration=float(edge_filt))
 
-    # Horizontal Edges (between rows)
+    #Horizontal Edges (between rows)
     for r in range(rows + 1):
         for c in range(cols):
             u = get_corner_id(r, c)
