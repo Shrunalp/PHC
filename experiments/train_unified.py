@@ -10,7 +10,7 @@ import wandb
 import gc
 import os
 
-# PHC & img data directory
+#PHC & img data directory
 DATA_DIR = "PHC_data" 
 IMG_DIR = "grey_ost_img"
 
@@ -142,7 +142,7 @@ def train():
             EarlyStopping(monitor='val_accuracy', patience=5, verbose=2)
         ]
         
-        # Handle single vs list input for fit()
+        #Handle single vs list input for fit()
         fit_x_train = X_train[0] if len(X_train) == 1 else X_train
         fit_x_test = X_test[0] if len(X_test) == 1 else X_test
         
@@ -156,7 +156,7 @@ def train():
 
         wandb.log(test_metrics)
         
-        # Memory clean up
+        #Memory clean up
         del CNN, X_train, X_test, y_train, y_test
         gc.collect()
         tf.keras.backend.clear_session()
