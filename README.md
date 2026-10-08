@@ -156,10 +156,11 @@ the QuPath installation whose jars are compiled against (on macOS, the `.app` bu
 `JAVA_HOME=$(/usr/libexec/java_home -v 25)` finds an installed JDK 25. Optionally,
 `PHC_PYTHON=/path/to/python ./build.sh test` also runs the end-to-end check on synthetic cells.
 
-**LLM Usage Disclosure:** Any use of generative AI in this project adheres to ethical guidelines for use and acknowledgment of generative AI in academic research. Each author has made a substantial contribution to the work, which has been thoroughly vetted for accuracy, and assumes responsibility for the integrity of their contributions. LLMs were used improve upon the existing PHC module by including additional functionality from the existing code base, developing a Java extension for QuPath utilization, and parallelizing computations. LLMs were not used to write the manuscript and did not develop the idea of PHCs.
 
 ## Authors
 
 Shrunal Pothagoni - spothago@gmu.edu
 
 Benjamin Schweinhart - bschwei@gmu.edu
+
+**LLM Usage Disclosure:** Any use of generative AI in this project adheres to ethical guidelines for use and acknowledgment of generative AI in academic research. Each author has made a substantial contribution to the work, which has been thoroughly vetted for accuracy, and assumes responsibility for the integrity of their contributions. LLMs were used improve upon the existing PHC module by including additional functionality from the existing code base, developing a Java extension for QuPath utilization, and parallelizing computations. LLMs were not used to write the manuscript and did not develop the idea of PHCs. If any mistakes are found, please contact the authors to address the issues.
