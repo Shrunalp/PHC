@@ -37,8 +37,9 @@ Extensions > PHC > Run PHC...
 
 ## Install (QuPath 0.7)
 
-1. Build the jar (see [Build](#build)) and drag `build/libs/qupath-extension-phc-0.6.0.jar`
-   onto the QuPath window, then restart QuPath.
+1. Download [`qupath-extension-phc-0.6.0.jar`](https://github.com/Shrunalp/PHC/releases/latest/download/qupath-extension-phc-0.6.0.jar)
+   (also in [`dist/`](dist/qupath-extension-phc-0.6.0.jar)), drag it onto the QuPath window
+   and restart QuPath. To build it yourself instead, see [Build](#build).
 2. In **Edit > Preferences > PHC**, set:
    - **Python executable**: a Python with the packages of the repository's
      `requirements.txt` (`gudhi`, `scikit-learn`, `opencv-python`, `joblib`, and optionally
@@ -281,7 +282,9 @@ outline. Any image type works: PHC reads detections, not pixels.
 
 ## Build
 
-Requires JDK 25+ and an installed QuPath 0.7 (its jars are the compile classpath).
+Only needed after changing the Java code; a ready-built jar is in `dist/`. Requires JDK 25+
+and an installed QuPath 0.7 (its jars are the compile classpath). After a rebuild, copy
+`build/libs/qupath-extension-phc-<VERSION>.jar` into `dist/` so the two stay in step.
 
 ```bash
 ./build.sh          # -> build/libs/qupath-extension-phc-0.6.0.jar

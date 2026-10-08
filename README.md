@@ -22,6 +22,7 @@ PHC/                    the Python library (import PHC)
 ├── plotting.py         matplotlib figures
 └── utils.py            shared helpers
 qupath-extension-phc/   QuPath extension that runs PHC on detected cells
+└── dist/             ready-built extension jar (drag onto QuPath)
 experiments/            scripts used for the paper (data generation, training)
 PHC_Tutorial.ipynb      tutorial notebook
 requirements.txt        pinned dependencies of the library, the extension and the tutorial
@@ -103,31 +104,28 @@ centroids), clusters the windows (or the cells), and shows the clusters as a hea
 slide together with an interactive 2D / 3D MDS plot. The computation runs in the PHC Python
 library installed above.
 
-### 1. Build the extension
+### 1. Install the extension in QuPath
 
-Building needs [QuPath 0.7](https://qupath.github.io) and a **JDK 25** or newer (for example
-[Eclipse Temurin](https://adoptium.net)). From the repository folder:
+1. Download the ready-built extension
+   [`qupath-extension-phc-0.6.0.jar`](https://github.com/Shrunalp/PHC/releases/latest/download/qupath-extension-phc-0.6.0.jar)
+   from the [latest release](https://github.com/Shrunalp/PHC/releases/latest). The same file is
+   also in this repository at
+   [`qupath-extension-phc/dist/`](qupath-extension-phc/dist/qupath-extension-phc-0.6.0.jar).
+   It needs **QuPath 0.7** and works on macOS, Windows and Linux.
+2. Drag the `.jar` file onto the QuPath window and restart QuPath. A **PHC** entry appears
+   under **Extensions**.
 
-```
-cd qupath-extension-phc
-JAVA_HOME=/path/to/jdk-25 QUPATH_APP=/Applications/QuPath-0.7.0-arm64.app ./build.sh
-```
+### 2. Point QuPath to the PHC Python library
 
-This writes `qupath-extension-phc/build/libs/qupath-extension-phc-0.6.0.jar`. `QUPATH_APP` is
-the QuPath installation whose jars are compiled against (on macOS, the `.app` bundle). On macOS,
-`JAVA_HOME=$(/usr/libexec/java_home -v 25)` finds an installed JDK 25. Optionally,
-`PHC_PYTHON=/path/to/python ./build.sh test` also runs the end-to-end check on synthetic cells.
+The extension runs the computation in the PHC library, so complete the
+[Installation](#installation) steps above first. Then open **Edit > Preferences > PHC** and set:
 
-### 2. Install it in QuPath
-
-1. Drag the `.jar` file onto the QuPath window and restart QuPath.
-2. Open **Edit > Preferences > PHC** and set:
-   - **Python executable**: the full path to the Python of the environment you installed the
-     requirements into, e.g. `~/miniconda3/envs/phc/bin/python` (run `which python` with the
-     environment active to find it). Use the full path: QuPath started from Finder does not see
-     your shell's `PATH`.
-   - **PHC library folder**: the root of the cloned repository (the folder that contains the
-     `PHC` package), e.g. `~/PHC`.
+- **Python executable**: the full path to the Python of the environment you installed the
+  requirements into, e.g. `~/miniconda3/envs/phc/bin/python` (run `which python` with the
+  environment active to find it; on Windows, `where python`). Use the full path: QuPath
+  started from Finder does not see your shell's `PATH`.
+- **PHC library folder**: the root of the cloned repository (the folder that contains the
+  `PHC` package), e.g. `~/PHC`.
 
 ### 3. Run PHC on a slide
 
@@ -142,6 +140,21 @@ the QuPath installation whose jars are compiled against (on macOS, the `.app` bu
 
 See [`qupath-extension-phc/README.md`](qupath-extension-phc/README.md) for every setting,
 the measurements written to QuPath, the plot files and the known limits.
+
+### Building the extension yourself (optional)
+
+Only needed if you change the Java code. Building needs QuPath 0.7 and a **JDK 25** or newer
+(for example [Eclipse Temurin](https://adoptium.net)). From the repository folder:
+
+```
+cd qupath-extension-phc
+JAVA_HOME=/path/to/jdk-25 QUPATH_APP=/Applications/QuPath-0.7.0-arm64.app ./build.sh
+```
+
+This writes `qupath-extension-phc/build/libs/qupath-extension-phc-0.6.0.jar`. `QUPATH_APP` is
+the QuPath installation whose jars are compiled against (on macOS, the `.app` bundle). On macOS,
+`JAVA_HOME=$(/usr/libexec/java_home -v 25)` finds an installed JDK 25. Optionally,
+`PHC_PYTHON=/path/to/python ./build.sh test` also runs the end-to-end check on synthetic cells.
 
 ## Authors
 
