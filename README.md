@@ -3,6 +3,8 @@ GitHub repository for Persistent Homology Convolutions (PHC). This method comput
 persistent homology on greyscale image data, and on point clouds of detected cells.
 Check out the corresponding paper at: https://arxiv.org/abs/2507.14378
 
+**LLM Usage Disclosure:** Any use of generative AI in this project adheres to ethical guidelines for use and acknowledgment of generative AI in academic research. Each author has made a substantial contribution to the work, which has been thoroughly vetted for accuracy, and assumes responsibility for the integrity of their contributions. LLMs were used improve upon the existing PHC module by including additional functionality from the existing code base, developing a Java extension for QuPath utilization, and parallelizing computations. LLMs were not used to write the manuscript and did not develop the idea of PHCs.
+
 ![alt text](https://github.com/Shrunalp/PHC/blob/main/PHC_visual.png?raw=true#center)
 
 ## Abstract
