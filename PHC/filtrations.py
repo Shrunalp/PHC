@@ -1,260 +1,280 @@
 """
-A collection of filtration based methods for computing persistence
+A collection of filtration based methods for computing persistence.
+
+Contents
+--------
+alphacomplex : function
+    Persistence diagram from the alpha complex of an image's foreground point cloud.
+alpha_pointcloud : function
+    Persistence diagram, in point units, from the alpha complex of a given point cloud.
+lower_star : function
+    Lower star filtration on a barycentric subdivision of the pixel grid.
+adj_complex : function
+    Filtration on the pixel adjacency graph, edges weighted by pixel magnitude.
+cubicalcomplex : function
+    Lower star persistence of the cubical complex built on the pixel grid.
 """
+
 import numpy as np
 import gudhi as gd
 from gudhi import CubicalComplex, AlphaComplex
-from .utils import pointcloud2D, remove_noisy_pts
+
+from .utils import diagram_in_dimension, pointcloud2D
+
+MIN_ALPHA_POINTS = 3  # fewer points span no triangle, so the window carries no structure
+ALPHA_REL_TOL = 1e-9  # intervals shorter than this fraction of their death are rounding error
+CUBICAL_FIELD = 2     # homology coefficients of the cubical complex, Z/2Z
+CUBICAL_MIN_PERSISTENCE = 0.01  # cubical intervals shorter than this are dropped
 
 
-def alphacomplex(img: np.ndarray, alpha_value: float = None, dim: int = 1, persistence_type: str = None) -> list[np.ndarray]:
+def alphacomplex(
+        img: np.ndarray,
+        alpha_value: float | None = None,
+        dim: int = 1,
+        persistence_type: str | None = None
+        ) -> list[np.ndarray]:
 
     """
-    Parameters
-    -----------
-    img : np.ndarray of float 
-        greyscaled pathology slide, must be depth one or zero
-        
-    alpha_value : float 
-        used to smooth greyscaled image to reduce topological noise
-    
-    dim : int 
-        persistent homology in dimension n, default set to 1
+    Detects cell formations from the shape of the foreground pixels: builds the alpha complex
+    of the point cloud of non-zero pixels, so rings of boundary pixels (cells) become
+    1-dimensional features. Use it on thresholded and dilated slides.
 
-    persistence_type : str 
-        option to compute ordinary or extended persistence, default is ordinary
+    Parameters
+    ----------
+    img : np.ndarray of float - size (n, m)
+        Preprocessed greyscale pathology slide; every pixel above 0 becomes a point.
+
+    alpha_value : float | None
+        Largest alpha radius kept in the complex, used to smooth out topological noise,
+        default None (no limit).
+
+    dim : int
+        Persistent homology dimension, default 1.
+
+    persistence_type : str | None
+        None (ordinary persistence) or "Extended" (extended persistence), default None.
 
     Returns
-    --------
-    dgm : list of an array of size (n,2)
-        persistence diagram of codim one using Alexander Duality to detect cell formation
+    -------
+    dgm : list of an np.ndarray of float - size (k, 2)
+        Single persistence diagram in dimension `dim`, filtration values being squared alpha
+        radii, without pixel-level noise points.
+
+    Raises
+    ------
+    ValueError
+        If `persistence_type` is not None or "Extended".
     """
+
     points = pointcloud2D(img)
     alpha_complex = AlphaComplex(points=points)
-    
+
     if alpha_value is None:
-        SimplexTree = alpha_complex.create_simplex_tree()
+        simplex_tree = alpha_complex.create_simplex_tree()
     else:
-        SimplexTree = alpha_complex.create_simplex_tree(max_alpha_square=alpha_value**2)
-    
-    if persistence_type == None:
-        SimplexTree.persistence()
-    elif persistence_type == "Extended":
-        SimplexTree.extend_filtration()
-        SimplexTree.extended_persistence(min_persistence=1e-5)
-    
-    if dim == 0:
-        dgm = SimplexTree.persistence_intervals_in_dimension(dim)[:-1]
-    else:
-        dgm = SimplexTree.persistence_intervals_in_dimension(dim)
-    dgm = remove_noisy_pts(dgm)
+        simplex_tree = alpha_complex.create_simplex_tree(max_alpha_square=alpha_value**2)
+
+    dgm = diagram_in_dimension(simplex_tree, dim=dim, persistence_type=persistence_type)
     return [dgm]
 
-def lower_star(img: np.ndarray, dim: int = 1, persistence_type: str = None) -> list[np.ndarray]:
+
+def alpha_pointcloud(points: np.ndarray, dim: int = 1) -> list[np.ndarray]:
 
     """
-    Parameters
-    -----------
-    img : np.ndarray of float 
-        greyscaled pathology slide, must be depth one or zero
-        
-    dim : int 
-        persistent homology in dimension n, default set to 1
+    Measures the shape of a point cloud, such as detected cell centroids, with the alpha
+    complex: dimension 0 tracks how clusters of points merge and dimension 1 the rings of
+    points (e.g. cells around a gland lumen). Unlike `alphacomplex` it takes the points
+    directly and keeps every finite interval, since there is no pixel grid noise to remove.
 
-    persistence_type : str 
-        option to compute ordinary or extended persistence, default is ordinary
+    Parameters
+    ----------
+    points : np.ndarray of float - size (n, 2)
+        (x, y) coordinates of the points; translating them does not change the diagram.
+
+    dim : int
+        Persistent homology dimension, default 1.
 
     Returns
-    --------
-    dgm : list of an array of size (n,2)
-        diagram in dim n. lower star filtration computed using barycentric subdivision 
+    -------
+    dgm : list of an np.ndarray of float - size (m, 2)
+        Single finite (birth, death) diagram in the units of `points`, i.e. alpha radii (the
+        square roots of gudhi's squared-radius filtration values). The infinite dimension 0
+        interval and zero-length (rounding error) intervals are dropped, and the diagram is
+        empty (size (0, 2)) for fewer than MIN_ALPHA_POINTS points.
+    """
+
+    points = np.asarray(points, dtype=float).reshape(-1, 2)
+    if len(points) < MIN_ALPHA_POINTS:
+        dgm = np.empty((0, 2))
+    else:
+        # Shift to the origin so large slide coordinates do not cost floating point precision
+        alpha_complex = AlphaComplex(points=points - points.min(axis=0))
+        simplex_tree = alpha_complex.create_simplex_tree()
+        simplex_tree.persistence()
+        squared_dgm = np.asarray(simplex_tree.persistence_intervals_in_dimension(dim),
+                                 dtype=float).reshape(-1, 2)
+        finite_dgm = squared_dgm[np.isfinite(squared_dgm[:, 1])]
+        # Cocircular points (common in regular layouts) give zero-length intervals that
+        # floating point leaves slightly positive; they carry no structure
+        lengths = finite_dgm[:, 1] - finite_dgm[:, 0]
+        finite_dgm = finite_dgm[lengths > ALPHA_REL_TOL * np.abs(finite_dgm[:, 1])]
+        dgm = np.sqrt(np.maximum(finite_dgm, 0.0))  # squared radii -> radii (point units)
+    return [dgm]
+
+
+def lower_star(
+        img: np.ndarray,
+        dim: int = 1,
+        persistence_type: str | None = None
+        ) -> list[np.ndarray]:
+
+    """
+    Builds a lower star filtration on a barycentric subdivision of the pixel grid, so that
+    pixel intensities drive the order in which cells appear. Use it for greyscale images
+    where intensity carries the signal.
+
+    Each pixel is split into four triangles around a centre vertex:
+
+        TL -- TR      corners and boundary edges take the smallest value of the pixels
+        |  \\/  |      they touch; the centre, its edges and the four triangles take the
+        |  /\\  |      pixel's own value
+        BL -- BR
+
+    Parameters
+    ----------
+    img : np.ndarray of float - size (n, m)
+        Greyscale pathology slide, must be depth one or zero.
+
+    dim : int
+        Persistent homology dimension, default 1.
+
+    persistence_type : str | None
+        None (ordinary persistence) or "Extended" (extended persistence), default None.
+
+    Returns
+    -------
+    dgm : list of an np.ndarray of float - size (k, 2)
+        Single persistence diagram in dimension `dim`, without pixel-level noise points.
+
+    Raises
+    ------
+    ValueError
+        If `persistence_type` is not None or "Extended".
     """
 
     rows, cols = img.shape
-    num_points = rows*cols
+    pixel_vals = np.asarray(img, dtype=float)
 
-    SimplexTree = gd.SimplexTree()
+    ### Vertex ids ###
+    # Centre vertices: 0 to (rows*cols - 1), corner vertices follow them row by row
+    centre_ids = np.arange(rows * cols).reshape(rows, cols)
+    corner_ids = rows * cols + np.arange((rows + 1) * (cols + 1)).reshape(rows + 1, cols + 1)
 
+    # Padding with +inf lets every corner and edge take a plain minimum over its neighbours
+    padded = np.pad(pixel_vals, 1, constant_values=np.inf)
+    corner_vals = np.minimum.reduce([padded[:-1, :-1], padded[:-1, 1:],
+                                     padded[1:, :-1], padded[1:, 1:]])
+    vertical_vals = np.minimum(padded[1:-1, :-1], padded[1:-1, 1:])    # left / right pixel
+    horizontal_vals = np.minimum(padded[:-1, 1:-1], padded[1:, 1:-1])  # up / down pixel
 
-    #Center vertices: 0 to (rows*cols - 1)
-    #Corner vertices: rows*cols to (rows*cols + (rows+1)*(cols+1) - 1)
-    
-    def get_center_id(r, c):
-        return r * cols + c
-    
-    def get_corner_id(r, c):
-        return num_points + r * (cols + 1) + c
+    ### Corners, then boundary edges (vertical, horizontal), then pixel interiors ###
+    simplex_tree = gd.SimplexTree()
+    simplex_tree.insert_batch(corner_ids.reshape(1, -1), corner_vals.ravel())
+    vertical_edges = np.stack([corner_ids[:-1, :].ravel(), corner_ids[1:, :].ravel()])
+    simplex_tree.insert_batch(vertical_edges, vertical_vals.ravel())
+    horizontal_edges = np.stack([corner_ids[:, :-1].ravel(), corner_ids[:, 1:].ravel()])
+    simplex_tree.insert_batch(horizontal_edges, horizontal_vals.ravel())
 
-    #Compute and insert corner vertices
-    for r in range(rows + 1):
-        for c in range(cols + 1):
-            # Identify adjacent pixel values
-            adjacent_values = []
-            if r > 0 and c > 0:          adjacent_values.append(img[r-1, c-1]) # Top-Left
-            if r > 0 and c < cols:       adjacent_values.append(img[r-1, c])   # Top-Right
-            if r < rows and c > 0:       adjacent_values.append(img[r, c-1])   # Bottom-Left
-            if r < rows and c < cols:    adjacent_values.append(img[r, c])     # Bottom-Right
-            
-            filt_val = min(adjacent_values) if adjacent_values else 0.0
-            
-            SimplexTree.insert([get_corner_id(r, c)], filtration=float(filt_val))
+    simplex_tree.insert_batch(centre_ids.reshape(1, -1), pixel_vals.ravel())
+    centre = centre_ids.ravel()
+    tl, tr = corner_ids[:-1, :-1].ravel(), corner_ids[:-1, 1:].ravel()
+    bl, br = corner_ids[1:, :-1].ravel(), corner_ids[1:, 1:].ravel()
+    for first, second in ((tl, tr), (tr, br), (br, bl), (bl, tl)):  # top, right, bottom, left
+        simplex_tree.insert_batch(np.stack([centre, first, second]), pixel_vals.ravel())
 
-    #Insert boundary edges (horizontal and vertical)
-
-    for r in range(rows):
-        for c in range(cols + 1):
-            u = get_corner_id(r, c)
-            v = get_corner_id(r+1, c)
-            
-            #Determine adjacent pixels (left and right)
-            pixel_vals = []
-            if c > 0:    pixel_vals.append(img[r, c-1]) #Left pixel
-            if c < cols: pixel_vals.append(img[r, c])   #Right pixel
-            
-            edge_filt = min(pixel_vals) if pixel_vals else 0.0
-            SimplexTree.insert([u, v], filtration=float(edge_filt))
-
-    #Horizontal Edges (between rows)
-    for r in range(rows + 1):
-        for c in range(cols):
-            u = get_corner_id(r, c)
-            v = get_corner_id(r, c+1)
-            
-            # Determine adjacent pixels (Up and Down)
-            pixel_vals = []
-            if r > 0:    pixel_vals.append(img[r-1, c]) # Up pixel
-            if r < rows: pixel_vals.append(img[r, c])   # Down pixel
-            
-            edge_filt = min(pixel_vals) if pixel_vals else 0.0
-            SimplexTree.insert([u, v], filtration=float(edge_filt))
-
-    #Process pixels: center, diagonal, and triangles 
-    for r in range(rows):
-        for c in range(cols):
-            pixel_val = float(img[r, c])
-            center_id = get_center_id(r, c)
-            
-            #Insert center vertex
-            SimplexTree.insert([center_id], filtration=pixel_val)
-            
-            # Get the 4 corner IDs for this pixel
-            # TL -- TR
-            # |      |
-            # BL -- BR
-            tl = get_corner_id(r, c)
-            tr = get_corner_id(r, c+1)
-            bl = get_corner_id(r+1, c)
-            br = get_corner_id(r+1, c+1)
-            
-            triangles = [
-                [center_id, tl, tr], # Top triangle
-                [center_id, tr, br], # Right triangle
-                [center_id, br, bl], # Bottom triangle
-                [center_id, bl, tl]  # Left triangle
-            ]
-            
-            for tri in triangles:
-                SimplexTree.insert(tri, filtration=pixel_val)
-
-    if persistence_type == None:
-        SimplexTree.persistence()
-    elif persistence_type == "Extended":
-        SimplexTree.extend_filtration()
-        SimplexTree.extended_persistence(min_persistence=1e-5)
-    
-    if dim == 0:
-        dgm = SimplexTree.persistence_intervals_in_dimension(dim)[:-1]
-    else:
-        dgm = SimplexTree.persistence_intervals_in_dimension(dim)
-    dgm = remove_noisy_pts(dgm)
+    dgm = diagram_in_dimension(simplex_tree, dim=dim, persistence_type=persistence_type)
     return [dgm]
 
-def adj_complex(img: np.ndarray, dim: int = 1, persistence_type: str = None) -> list[np.ndarray]:
-    
+
+def adj_complex(
+        img: np.ndarray,
+        dim: int = 1,
+        persistence_type: str | None = None
+        ) -> list[np.ndarray]:
+
     """
+    Filters the pixel adjacency graph by pixel magnitude: every pixel is a vertex with its
+    own value, and it is joined to its 8 neighbours by edges valued at the larger of the two
+    pixels. Use it to follow how bright regions connect as the threshold rises.
+
     Parameters
-    -----------
-    img : np.ndarray of float 
-        greyscaled pathology slide, must be depth one or zero
+    ----------
+    img : np.ndarray of float - size (n, m)
+        Greyscale pathology slide, must be depth one or zero.
 
-    dim : int 
-        persistent homology in dimension n, default set to 1
+    dim : int
+        Persistent homology dimension, default 1.
 
-    persistence_type : str 
-        option to compute ordinary or extended persistence, default is ordinary
+    persistence_type : str | None
+        None (ordinary persistence) or "Extended" (extended persistence), default None.
 
     Returns
-    --------
-    dgm : list of an array of size (n,2)
-        dim n adjacency complex filtration based diagram
+    -------
+    dgm : list of an np.ndarray of float - size (k, 2)
+        Single persistence diagram in dimension `dim`, without pixel-level noise points.
+
+    Raises
+    ------
+    ValueError
+        If `persistence_type` is not None or "Extended".
     """
 
-    filtration = img.flatten() 
     rows, cols = img.shape
-    num_points = rows*cols
+    pixel_vals = np.asarray(img, dtype=float)
+    ids = np.arange(rows * cols).reshape(rows, cols)
 
-    SimplexTree = gd.SimplexTree()
-    
-    #Filtration on the magnitude of pixels
-    for i in range(num_points):
-        SimplexTree.insert([i], filtration[i])
-    for i in range(rows):
-        for j in range(cols):
+    simplex_tree = gd.SimplexTree()
+    simplex_tree.insert_batch(ids.reshape(1, -1), pixel_vals.ravel())
 
-            idx = i * cols + j
-            
-            #Neighbors
-            down = (i + 1) * cols + j
-            right = i * cols + (j + 1)
-            diag_br = (i + 1) * cols + (j + 1) #Bottom-right
-            diag_bl = (i + 1) * cols + j       #Bottom-left (used with right)
+    # (first pixel, second pixel) slices of each edge direction
+    neighbours = (
+        (np.s_[:-1, :], np.s_[1:, :]),     # vertical: pixel and the one below
+        (np.s_[:, :-1], np.s_[:, 1:]),     # horizontal: pixel and the one to its right
+        (np.s_[:-1, :-1], np.s_[1:, 1:]),  # diagonal: top-left to bottom-right
+        (np.s_[:-1, 1:], np.s_[1:, :-1]),  # diagonal: top-right to bottom-left
+    )
+    for first, second in neighbours:
+        edges = np.stack([ids[first].ravel(), ids[second].ravel()])
+        edge_vals = np.maximum(pixel_vals[first], pixel_vals[second])  # brighter endpoint
+        simplex_tree.insert_batch(edges, edge_vals.ravel())
 
-            #Vertical edges
-            if i + 1 < rows:
-                SimplexTree.insert([idx, down], filtration=max(img[i, j], img[i+1, j]))
-            
-            #Horizontal edges
-            if j + 1 < cols:
-                SimplexTree.insert([idx, right], filtration=max(img[i, j], img[i, j+1]))
-            
-            #Diagonal edges and triangles
-            if i + 1 < rows and j + 1 < cols:
-                #Diagonal 1: top-left to bottom-right
-                SimplexTree.insert([idx, diag_br], filtration=max(img[i, j], img[i+1, j+1]))
-                #Diagonal 2: top-right to bottom-left
-                SimplexTree.insert([idx + 1, diag_bl], filtration=max(img[i, j+1], img[i+1, j]))
-    
-    if persistence_type == None:
-        SimplexTree.persistence()
-    elif persistence_type == "Extended":
-        SimplexTree.extend_filtration()
-        SimplexTree.extended_persistence(min_persistence=1e-5)
-    
-    if dim == 0:
-        dgm = SimplexTree.persistence_intervals_in_dimension(dim)[:-1]
-    else:
-        dgm = SimplexTree.persistence_intervals_in_dimension(dim)
-    dgm = remove_noisy_pts(dgm)
+    dgm = diagram_in_dimension(simplex_tree, dim=dim, persistence_type=persistence_type)
     return [dgm]
+
 
 def cubicalcomplex(img: np.ndarray, dim: int = 1) -> list[np.ndarray]:
 
     """
+    Computes lower star persistence on the cubical complex of the pixel grid, with one square
+    per pixel. Faster than `lower_star` because no subdivision is needed.
+
     Parameters
-    -----------
-    img : np.ndarray of float 
-        greyscaled pathology slide, must be depth one or zero 
-    dim : int 
-        persistent homology in dimension n, default set to 1
+    ----------
+    img : np.ndarray of float - size (n, m)
+        Greyscale pathology slide, must be depth one or zero.
+
+    dim : int
+        Persistent homology dimension, default 1.
 
     Returns
-    --------
-    dgm : list of an array of size (n,2)
-        dim one persistence diagram generated from the cubical complex using lowerstar filtration
+    -------
+    dgm : list of an np.ndarray of float - size (k, 2)
+        Single persistence diagram in dimension `dim`, without intervals shorter than
+        CUBICAL_MIN_PERSISTENCE.
     """
 
-    cubical_complex = CubicalComplex(dimensions=img.shape,
-                                       top_dimensional_cells=img.flatten()) 
-    cubical_complex.persistence(homology_coeff_field=2, min_persistence=0.01)
+    cubical_complex = CubicalComplex(dimensions=img.shape, top_dimensional_cells=img.flatten())
+    cubical_complex.persistence(homology_coeff_field=CUBICAL_FIELD,
+                                min_persistence=CUBICAL_MIN_PERSISTENCE)
     dgm = np.array(cubical_complex.persistence_intervals_in_dimension(dim))
     return [dgm]

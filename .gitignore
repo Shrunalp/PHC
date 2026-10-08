@@ -1,0 +1,21 @@
+# Python and numba caches
+__pycache__/
+*.py[cod]
+*.nbi
+*.nbc
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+
+# QuPath extension build output
+qupath-extension-phc/build/
+
+# Data and generated arrays
+*.npy
+grey_ost_img/
+PHC_data/
+
+# macOS
+.DS_Store
