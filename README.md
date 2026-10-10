@@ -99,18 +99,18 @@ images and PHC on cell centroids, including spatially constrained clustering.
 ## QuPath extension
 
 `qupath-extension-phc/` adds a **PHC** menu to [QuPath](https://qupath.github.io) 0.7. It runs
-PHC on the cells detected inside an annotation (alpha complex persistence of the cell
-centroids), clusters the windows (or the cells), and shows the clusters as a heatmap on the
-slide together with an interactive 2D / 3D MDS plot. The computation runs in the PHC Python
+PHC on the cells detected inside an annotation (alpha complex persistence of the centroids in
+a window centred on each cell), clusters the cells, and shows the clusters on the slide as cell
+measurements together with an interactive 2D / 3D MDS plot. The computation runs in the PHC Python
 library installed above.
 
 ### 1. Install the extension in QuPath
 
 1. Download the ready-built extension
-   [`qupath-extension-phc-0.6.0.jar`](https://github.com/Shrunalp/PHC/releases/latest/download/qupath-extension-phc-0.6.0.jar)
+   [`qupath-extension-phc-0.6.1.jar`](https://github.com/Shrunalp/PHC/releases/latest/download/qupath-extension-phc-0.6.1.jar)
    from the [latest release](https://github.com/Shrunalp/PHC/releases/latest). The same file is
    also in this repository at
-   [`qupath-extension-phc/dist/`](qupath-extension-phc/dist/qupath-extension-phc-0.6.0.jar).
+   [`qupath-extension-phc/dist/`](qupath-extension-phc/dist/qupath-extension-phc-0.6.1.jar).
    It needs **QuPath 0.7** and works on macOS, Windows and Linux.
 2. Drag the `.jar` file onto the QuPath window and restart QuPath. A **PHC** entry appears
    under **Extensions**.
@@ -133,10 +133,10 @@ The extension runs the computation in the PHC library, so complete the
 2. Detect the cells in it: **Analyze > Cell detection > Cell detection** (or any detection
    command, e.g. StarDist).
 3. Choose **Extensions > PHC > Run PHC on selected annotation...**, pick the settings (window
-   size and stride in µm, tiled or per-cell windows, number of clusters, ...) and press **Run**.
-4. The annotation is covered with tiles coloured by cluster (or, with per-cell windows, the
-   cells get PHC measurements), and the MDS viewer opens. **Extensions > PHC > Clear PHC
-   heatmap** removes the results.
+   size in µm, number of clusters, ...) and press **Run**.
+4. The cells get PHC measurements (colour them with **Measure > Show measurement maps >
+   PHC: cluster**), and the MDS viewer opens. **Extensions > PHC > Clear PHC heatmap** removes
+   the results.
 
 See [`qupath-extension-phc/README.md`](qupath-extension-phc/README.md) for every setting,
 the measurements written to QuPath, the plot files and the known limits.
@@ -151,7 +151,7 @@ cd qupath-extension-phc
 JAVA_HOME=/path/to/jdk-25 QUPATH_APP=/Applications/QuPath-0.7.0-arm64.app ./build.sh
 ```
 
-This writes `qupath-extension-phc/build/libs/qupath-extension-phc-0.6.0.jar`. `QUPATH_APP` is
+This writes `qupath-extension-phc/build/libs/qupath-extension-phc-0.6.1.jar`. `QUPATH_APP` is
 the QuPath installation whose jars are compiled against (on macOS, the `.app` bundle). On macOS,
 `JAVA_HOME=$(/usr/libexec/java_home -v 25)` finds an installed JDK 25. Optionally,
 `PHC_PYTHON=/path/to/python ./build.sh test` also runs the end-to-end check on synthetic cells.

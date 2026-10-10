@@ -31,7 +31,7 @@
 
 set -euo pipefail
 
-VERSION="0.6.0"
+VERSION="0.6.1"
 JAVA_RELEASE=25   # QuPath 0.7 runs on Java 25
 JAVA_HOME="${JAVA_HOME:-$HOME/.local/jdk-25.0.4.1+1/Contents/Home}"
 QUPATH_APP="${QUPATH_APP:-/Applications/QuPath-0.7.0-arm64.app}"

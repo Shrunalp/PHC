@@ -19,9 +19,9 @@ import qupath.lib.plugins.parameters.ParameterList;
 /**
  * Holds every setting the PHC bridge needs, so one validated object travels from the dialog to
  * the Python process. PHC is computed on the alpha complex of the cell centroids in each
- * window: tiled windows over the annotation (the default), or one window centred on each cell.
- * Build it with {@link #fromParameterList(ParameterList)} after showing
- * {@link #createParameterList()} to the user.
+ * window: one window centred on each cell (the only mode the dialog offers), or tiled windows
+ * over the annotation (scripts only). Build it with {@link #fromParameterList(ParameterList)}
+ * after showing {@link #createParameterList()} to the user.
  *
  * @param dimension (int) Persistent homology dimension, 0 or 1 (the alpha complex of points in
  *        the plane has no higher homology).
@@ -157,22 +157,13 @@ public record PHCParameters(
                                 + "e.g. ~/miniconda3/envs/phc/bin/python")
                 .addStringParameter(PHC_LIBRARY_DIR_KEY, "PHC library folder", "",
                         "Folder that contains the PHC package, e.g. ~/PHC")
-                .addTitleParameter("Alpha persistence of cell centroids")
-                .addChoiceParameter("mode", "Windows", MODE_LABELS.get(0), MODE_LABELS,
-                        "Tiled windows: square windows tiling the annotation, shown as heatmap "
-                                + "tiles. Per-cell windows: one square window centred on each "
-                                + "cell, results stored on the cells")
+                .addTitleParameter("Alpha persistence of cell centroids (per-cell windows)")
                 .addDoubleParameter("windowSize", "Window size", 100, micrometres,
-                        "Side length of each square window, in " + micrometres + " (in pixels "
-                                + "if the image has no pixel size). Per-cell windows: side of "
-                                + "the square centred on each cell")
-                .addDoubleParameter("stride", "Stride", 100, micrometres,
-                        "Step between windows, in " + micrometres + " (in pixels if the image "
-                                + "has no pixel size); smaller than the window size gives "
-                                + "overlap. Ignored for per-cell windows")
+                        "Side length of the square window centred on each cell, in "
+                                + micrometres + " (in pixels if the image has no pixel size)")
                 .addIntParameter("minCells", "Min cells per window", 10, null,
-                        "Windows with fewer cell centroids are left out of the heatmap "
-                                + "(per-cell windows count the centre cell too)")
+                        "Cells whose window holds fewer cell centroids (the centre cell "
+                                + "included) are left out of the clustering")
                 .addIntParameter("dimension", "Homology dimension", 1, null,
                         "0 = connected components, 1 = loops (e.g. glands)")
                 .addChoiceParameter("vectorization", "Vectorization", "PI", VECTORIZATIONS,
@@ -183,11 +174,12 @@ public record PHCParameters(
                         "-1 uses every core, 1 runs serially")
                 .addTitleParameter("Clustering (L2 distance)")
                 .addIntParameter("nClusters", "Number of clusters", 4, null,
-                        "Agglomerative clusters shown in the heatmap")
+                        "Agglomerative clusters the cells are grouped into")
                 .addChoiceParameter("linkage", "Linkage", "ward", LINKAGES,
                         "How the distance between two clusters is measured")
                 .addDoubleParameter("minCoverage", "Min ROI coverage", 0.5, null,
-                        "Windows with less of their area inside the ROI are dropped")
+                        "Cells whose window has less of its area inside the ROI are left out "
+                                + "of the clustering")
                 .addTitleParameter("MDS embedding")
                 .addBooleanParameter("computeMds", "Compute MDS embedding", DEFAULT_COMPUTE_MDS,
                         "Project the windows' L2 distances into 2D and 3D (metric MDS) and "
@@ -197,20 +189,19 @@ public record PHCParameters(
                         "Larger runs embed a random subsample of this many windows. MDS time "
                                 + "and memory grow as n^2: about 3 s for 1000 windows, 30 s "
                                 + "for 3000, 90 s and 2.3 GB for 5000")
-                .addTitleParameter("Per-cell windows")
+                .addTitleParameter("Cell classes and spatial clustering")
                 .addBooleanParameter("classifyCells", "Set cell classes to PHC clusters "
                                 + "(replaces their current classification)",
                         DEFAULT_CLASSIFY_CELLS,
-                        "Per-cell windows only: give each clustered cell the class 'PHC "
-                                + "cluster k'. Clear PHC heatmap restores the original classes")
+                        "Give each clustered cell the class 'PHC cluster k'. Clear PHC "
+                                + "heatmap restores the original classes")
                 .addBooleanParameter("spatialClustering", "Spatially constrained clustering "
                                 + "(Delaunay adjacency of cell centroids)",
                         DEFAULT_SPATIAL_CLUSTERING,
-                        "Per-cell windows only (not used for tiled windows; a tiled run with "
-                                + "this on stops with a message): only cells joined by an edge "
-                                + "of the Delaunay triangulation of their centroids can merge, "
-                                + "so every cluster is a spatially contiguous region. All "
-                                + "clustered cells are used (no 10,000-cell subsample)")
+                        "Only cells joined by an edge of the Delaunay triangulation of their "
+                                + "centroids can merge, so every cluster is a spatially "
+                                + "contiguous region. All clustered cells are used (no "
+                                + "10,000-cell subsample)")
                 .addDoubleParameter("maxEdgeLength", "Max Delaunay edge length",
                         DEFAULT_MAX_EDGE_LENGTH, micrometres,
                         "Spatially constrained clustering only: Delaunay edges longer than "
@@ -231,7 +222,7 @@ public record PHCParameters(
         PHCParameters settings = new PHCParameters(
                 params.getIntParameterValue("dimension"),
                 params.getDoubleParameterValue("windowSize"),
-                params.getDoubleParameterValue("stride"),
+                params.getDoubleParameterValue("windowSize"),  // stride is unused per cell
                 (String) params.getChoiceParameterValue("vectorization"),
                 params.getIntParameterValue("vectorResolution"),
                 params.getIntParameterValue("minCells"),
@@ -241,7 +232,7 @@ public record PHCParameters(
                 params.getIntParameterValue("nJobs"),
                 params.getBooleanParameterValue("computeMds"),
                 params.getIntParameterValue("mdsMaxWindows"),
-                modeForLabel((String) params.getChoiceParameterValue("mode")),
+                MODE_CELLS,  // the dialog only offers per-cell windows
                 params.getBooleanParameterValue("classifyCells"),
                 params.getBooleanParameterValue("spatialClustering"),
                 params.getDoubleParameterValue("maxEdgeLength"));

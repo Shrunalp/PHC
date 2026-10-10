@@ -9,8 +9,9 @@ dissimilarity matrix) for QuPath to draw.
 Inputs
 ------
 --cells : GeoJSON FeatureCollection
-    Detections exported by QuPath; each cell sits at the area centroid of its
-    "nucleusGeometry" when present, else of its "geometry" (Points are used as they are).
+    Detections exported by QuPath, one Point feature per cell at its nucleus centroid (or its
+    own centroid without a nucleus). Polygon features are also accepted: a cell then sits at
+    the area centroid of its "nucleusGeometry" when present, else of its "geometry".
     Coordinates are full-resolution slide pixels.
 
 --mask : PNG, 8-bit - size (ceil(H / D), ceil(W / D))
@@ -130,6 +131,7 @@ check_environment()
 
 import cv2  # noqa: E402  (imported after the environment check above)
 import numpy as np  # noqa: E402
+from joblib import Parallel, delayed  # noqa: E402
 
 from PHC import (PHC, agglomerative_clusters_capped, l2_dissimilarity,  # noqa: E402
                  mds_embedding, plot_embedding, plot_spatial_graph, read_cell_features,
@@ -143,6 +145,7 @@ EXCLUDED = -1                   # cluster label for windows that fail the filter
 PROGRESS_INTERVAL_S = 0.1       # most frequent progress update sent to QuPath
 MIN_MDS_WINDOWS = 2             # MDS needs at least one pair of windows
 MDS_SEED = 0                    # seed of the subsample and of sklearn's MDS
+MDS_COMPONENTS = (2, 3)         # embedding dimensions, fitted side by side
 CLUSTER_SEED = 0                # seed of the clustering subsample (cells mode, large n)
 PLOT_DPI = 150
 MDS_COLUMNS = ("mds2_x", "mds2_y", "mds3_x", "mds3_y", "mds3_z")
@@ -429,7 +432,7 @@ def warn(message: str) -> None:
     print(f"Warning: {message}", flush=True)
 
 
-def embed_windows(windows: np.ndarray, max_windows: int) -> dict | None:
+def embed_windows(windows: np.ndarray, max_windows: int, n_jobs: int = -1) -> dict | None:
 
     """
     Lays the clustered windows out in 2D and 3D with metric MDS on their L2 dissimilarity
@@ -443,6 +446,10 @@ def embed_windows(windows: np.ndarray, max_windows: int) -> dict | None:
 
     max_windows : int
         Most windows to embed (m = min(n, max_windows)).
+
+    n_jobs : int
+        Worker processes allowed for the run; 1 fits the 2D and 3D embeddings one after the
+        other, anything else fits them in two threads at once (same result), default -1.
 
     Returns
     -------
@@ -465,8 +472,13 @@ def embed_windows(windows: np.ndarray, max_windows: int) -> dict | None:
 
         report_stage("mds", len(index))
         dissimilarity = l2_dissimilarity(windows[index])
-        mds2, stress_2d = mds_embedding(dissimilarity, n_components=2, random_state=MDS_SEED)
-        mds3, stress_3d = mds_embedding(dissimilarity, n_components=3, random_state=MDS_SEED)
+        # The two fits are independent and mostly in BLAS, so threads overlap them without
+        # copying the matrix
+        (mds2, stress_2d), (mds3, stress_3d) = Parallel(
+            n_jobs=1 if n_jobs == 1 else len(MDS_COMPONENTS), backend="threading")(
+            delayed(mds_embedding)(dissimilarity, n_components=n_components,
+                                   random_state=MDS_SEED)
+            for n_components in MDS_COMPONENTS)
         embedding = {"index": index, "mds2": mds2, "mds3": mds3, "subsampled": subsampled,
                      "stress_2d": stress_2d, "stress_3d": stress_3d}
     return embedding
@@ -654,7 +666,8 @@ def analyse_vectors(
     mds2, mds3 = [None] * n_items, [None] * n_items
     mds_summary = None
     embedded_ids = np.empty(0, dtype=int)
-    embedding = embed_windows(vectors, args.mds_max_windows) if args.mds else None
+    embedding = (embed_windows(vectors, args.mds_max_windows, n_jobs=args.n_jobs)
+                 if args.mds else None)
     if embedding is not None:
         embedded_ids = kept[embedding["index"]]
         for k, i in enumerate(embedded_ids):

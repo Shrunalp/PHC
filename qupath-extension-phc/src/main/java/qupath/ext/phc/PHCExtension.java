@@ -104,8 +104,8 @@ public class PHCExtension implements QuPathExtension {
     @Override
     public String getDescription() {
         return "Alpha Persistent Homology Convolutions on the centroids of detected cells in "
-                + "an annotation, in tiled windows or one window per cell, shown as an L2 / "
-                + "agglomerative clustering heatmap and an MDS plot.";
+                + "an annotation, in one window centred on each cell, shown as an L2 / "
+                + "agglomerative clustering of the cells and an MDS plot.";
     }
 
     /**

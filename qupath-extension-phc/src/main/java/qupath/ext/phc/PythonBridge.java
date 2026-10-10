@@ -30,6 +30,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,9 +54,11 @@ import com.google.gson.annotations.SerializedName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import qupath.lib.io.PathIO;
-import qupath.lib.io.PathIO.GeoJsonExportOptions;
+import qupath.lib.objects.PathCellObject;
+import qupath.lib.geom.Point2;
 import qupath.lib.objects.PathObject;
+import qupath.lib.roi.PolygonROI;
+import qupath.lib.roi.interfaces.ROI;
 
 /**
  * Hands an annotation's detected cells to the user's Python environment, where the PHC library
@@ -226,8 +229,11 @@ public final class PythonBridge {
     }
 
     /**
-     * Writes the cells Python reads, in list order, without measurements, so the bridge's
-     * feature index i is cells.get(i) and earlier PHC measurements never reach Python.
+     * Writes the cells Python reads as a GeoJSON FeatureCollection of Point features at each
+     * cell's centroid, in list order, so the bridge's feature index i is cells.get(i). Only the
+     * centroids are written: full cell and nucleus outlines made the file ~10x larger and slow
+     * to write and parse, and Python only uses the centroid. Measurements are never written,
+     * so earlier PHC measurements never reach Python.
      *
      * @param path (Path) GeoJSON file to write.
      * @param cells (List of PathObject) Exported cells, in the order results map back to.
@@ -235,8 +241,72 @@ public final class PythonBridge {
      * @throws IOException When the file cannot be written.
      */
     static void writeCells(Path path, List<PathObject> cells) throws IOException {
-        PathIO.exportObjectsAsGeoJSON(path, cells, GeoJsonExportOptions.FEATURE_COLLECTION,
-                GeoJsonExportOptions.EXCLUDE_MEASUREMENTS);
+        try (Writer out = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+            out.write("{\"type\":\"FeatureCollection\",\"features\":[");
+            StringBuilder feature = new StringBuilder();
+            for (int i = 0; i < cells.size(); i++) {
+                PathObject cell = cells.get(i);
+                double[] centroid = centroid(centroidRoi(cell));
+                feature.setLength(0);
+                feature.append(i == 0 ? "" : ",")
+                        .append("{\"type\":\"Feature\",\"id\":\"").append(cell.getID())
+                        .append("\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[")
+                        .append(centroid[0]).append(',').append(centroid[1]).append("]}}");
+                out.append(feature);
+            }
+            out.write("]}");
+        }
+    }
+
+    /**
+     * Picks the ROI whose centroid stands for a cell: the nucleus, which marks where the cell
+     * sits more precisely than its estimated boundary, or the object's own ROI when there is
+     * no nucleus (plain detections, or cells without one).
+     *
+     * @param cell (PathObject) Exported detection or cell.
+     * @return (ROI) Nucleus ROI when present, else the object's ROI.
+     */
+    static ROI centroidRoi(PathObject cell) {
+        ROI nucleus = cell instanceof PathCellObject cellObject ? cellObject.getNucleusROI() : null;
+        ROI centroidRoi = nucleus != null ? nucleus : cell.getROI();
+        return centroidRoi;
+    }
+
+    /**
+     * Gives the area centroid of a ROI in double precision. QuPath's own centroid of a polygon
+     * ROI carries float rounding (~1e-4 px), and its GeoJSON export rounds vertices to two
+     * decimals (~4e-3 px), so polygons use the shoelace formula on the stored vertices; other
+     * ROIs (ellipses, rectangles, points) have an exact centroid already.
+     *
+     * @param roi (ROI) Nucleus or cell ROI.
+     * @return (double[]) Centroid (x, y) in slide pixels.
+     */
+    static double[] centroid(ROI roi) {
+        double[] centroid = {roi.getCentroidX(), roi.getCentroidY()};
+        if (roi instanceof PolygonROI) {
+            List<Point2> vertices = roi.getAllPoints();
+            Point2 origin = vertices.get(0);  // shift to keep slide-scale coordinates precise
+            double area2 = 0;
+            double sumX = 0;
+            double sumY = 0;
+            for (int i = 0; i < vertices.size(); i++) {
+                Point2 p = vertices.get(i);
+                Point2 q = vertices.get((i + 1) % vertices.size());
+                double px = p.getX() - origin.getX();
+                double py = p.getY() - origin.getY();
+                double qx = q.getX() - origin.getX();
+                double qy = q.getY() - origin.getY();
+                double cross = px * qy - qx * py;
+                area2 += cross;
+                sumX += (px + qx) * cross;
+                sumY += (py + qy) * cross;
+            }
+            if (area2 != 0) {  // degenerate polygons keep QuPath's centroid
+                centroid[0] = origin.getX() + sumX / (3 * area2);
+                centroid[1] = origin.getY() + sumY / (3 * area2);
+            }
+        }
+        return centroid;
     }
 
     /**

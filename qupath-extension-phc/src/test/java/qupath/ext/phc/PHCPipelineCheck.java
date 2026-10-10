@@ -186,8 +186,13 @@ public final class PHCPipelineCheck {
                 + "clusters"), "per-cell progress header: " + cellHeader);
         PHCParameters fromDialog = PHCParameters.fromParameterList(
                 PHCParameters.createParameterList());
-        check(!fromDialog.isCellMode() && !fromDialog.classifyCells(),
-                "the dialog defaults to tiled windows without classifying cells");
+        check(fromDialog.isCellMode() && !fromDialog.classifyCells()
+                        && !PHCParameters.createParameterList().getParameters()
+                                .containsKey("mode")
+                        && !PHCParameters.createParameterList().getParameters()
+                                .containsKey("stride"),
+                "the dialog has no windows drop-down or stride and always runs per-cell "
+                        + "windows, without classifying cells");
         check(PHCParameters.modeForLabel("Per-cell windows").equals(PHCParameters.MODE_CELLS),
                 "'Per-cell windows' maps to --mode cells");
         check(!perCell.spatialClustering() && perCell.maxEdgeLength() == 0
