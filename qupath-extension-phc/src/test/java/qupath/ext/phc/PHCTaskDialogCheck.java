@@ -4,8 +4,8 @@
  * Contents
  * --------
  * PHCTaskDialogCheck : class
- *     Runs PHCTask with its real ProgressDialog (tiled and per-cell windows, plain and
- *     Delaunay-constrained), opens the MDS viewer on tiles and on cells and asserts on both.
+ *     Runs PHCTask with its real ProgressDialog (plain and Delaunay-constrained clustering),
+ *     opens the MDS viewer on the cells and asserts on both.
  */
 
 package qupath.ext.phc;
@@ -20,7 +20,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Predicate;
 
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
@@ -44,9 +43,9 @@ import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 
 /**
  * Exercises the progress dialog as a user sees it, which the headless check cannot: the
- * dialog must open, show the window count and time left, close itself when PHC finishes, and
+ * dialog must open, show the cell count and time left, close itself when PHC finishes, and
  * stop Python when Cancel is pressed; the MDS viewer must draw both plots in the cluster
- * colours and link its points to the tile selection. Runs on the synthetic cells of
+ * colours and link its points to the cell selection. Runs on the synthetic cells of
  * {@link SyntheticSlide}.
  */
 public final class PHCTaskDialogCheck {
@@ -84,18 +83,14 @@ public final class PHCTaskDialogCheck {
         Platform.setImplicitExit(false);
         ImageData<BufferedImage> imageData = SyntheticSlide.createImageData(new File(args[2]));
         PathObject annotation = SyntheticSlide.addAnnotationWithCells(imageData);
-        PHCParameters moderate = PHCPipelineCheck.tiledParams(1, 200, 8, "PI", 4, "ward", true,
-                PHCParameters.DEFAULT_MDS_MAX_WINDOWS);  // ~7,900 windows: time to see the ETA
+        PHCParameters slow = PHCPipelineCheck.slowParams();  // time to see the ETA
 
-        PHCPipeline.Result result = checkCompletedRun(imageData, annotation, moderate,
-                new PythonBridge(args[0], args[1]), new File(args[2], "progress_dialog.png"));
-        if (result != null) {
-            checkMdsViewer(imageData, annotation, result, new File(args[2]));
-        }
+        checkCompletedRun(imageData, annotation, slow, new PythonBridge(args[0], args[1]),
+                new File(args[2], "progress_dialog.png"));
         checkCellRun(imageData, annotation, new PythonBridge(args[0], args[1]),
                 new File(args[2]));
         checkSpatialCellRun(imageData, annotation, new PythonBridge(args[0], args[1]));
-        checkCancelledRun(imageData, annotation, moderate, new PythonBridge(args[0], args[1]));
+        checkCancelledRun(imageData, annotation, slow, new PythonBridge(args[0], args[1]));
 
         System.out.println(failures == 0 ? "ALL DIALOG CHECKS PASSED"
                 : failures + " DIALOG CHECK(S) FAILED");
@@ -110,10 +105,10 @@ public final class PHCTaskDialogCheck {
      * @param settings (PHCParameters) Settings for the run.
      * @param bridge (PythonBridge) Bridge to the PHC library.
      * @param screenshot (File) PNG the mid-run dialog is saved to.
-     * @return (PHCPipeline.Result) The run's result, or null when the task did not succeed.
+     * @return (void)
      * @throws Exception When waiting is interrupted or the screenshot cannot be written.
      */
-    private static PHCPipeline.Result checkCompletedRun(ImageData<BufferedImage> imageData,
+    private static void checkCompletedRun(ImageData<BufferedImage> imageData,
                                           PathObject annotation, PHCParameters settings,
                                           PythonBridge bridge, File screenshot)
             throws Exception {
@@ -145,10 +140,10 @@ public final class PHCTaskDialogCheck {
         // Task state may only be read on the JavaFX thread
         javafx.concurrent.Worker.State state = onFx(task::getState);
         PHCPipeline.Result result = onFx(task::getValue);
-        List<PathObject> tiles = result == null ? null : result.tiles();
-        check(state == javafx.concurrent.Worker.State.SUCCEEDED && tiles != null
-                && !tiles.isEmpty(), "task succeeds with "
-                + (tiles == null ? 0 : tiles.size()) + " tiles");
+        int nResults = result == null ? 0 : result.cells().size();
+        check(state == javafx.concurrent.Worker.State.SUCCEEDED
+                && nResults == SyntheticSlide.nCellsInside(), "task succeeds with " + nResults
+                + " cell results");
         check(messages.stream().anyMatch(m -> m.matches(ETA_PATTERN)),
                 "dialog showed a time-left estimate, e.g. '" + messages.stream()
                         .filter(m -> m.matches(ETA_PATTERN))
@@ -160,31 +155,6 @@ public final class PHCTaskDialogCheck {
         check(snapshotTaken.get(), "mid-run screenshot saved to " + screenshot);
         check(messages.stream().anyMatch(m -> m.startsWith("Projecting")),
                 "dialog showed the MDS stage");
-        return result;
-    }
-
-    /**
-     * Opens the MDS viewer on a tiled run's tiles, saves both tabs, and checks the plots use
-     * the cluster colours, a click selects and centres on the tile, a QuPath selection
-     * highlights the point, and closing the window stops listening.
-     *
-     * @param imageData (ImageData of BufferedImage) Test image.
-     * @param annotation (PathObject) Annotation the run was on.
-     * @param result (PHCPipeline.Result) Result of the completed run.
-     * @param outDir (File) Folder the snapshots are written to.
-     * @return (void)
-     * @throws Exception When the viewer fails or a snapshot cannot be written.
-     */
-    private static void checkMdsViewer(ImageData<BufferedImage> imageData, PathObject annotation,
-                                       PHCPipeline.Result result, File outDir)
-            throws Exception {
-        PathObjectHierarchy hierarchy = imageData.getHierarchy();
-        hierarchy.removeObjects(PHCPipeline.existingTiles(annotation), true);
-        annotation.addChildObjects(result.tiles());
-        hierarchy.fireHierarchyChangedEvent(annotation);
-        checkViewer(hierarchy, result.tiles(), result.mds(), ProgressTracker.WINDOWS_NOUN,
-                new File(outDir, "mds_2d_view.png"), new File(outDir, "mds_3d_view.png"),
-                PathObject::isTile);
     }
 
     /**
@@ -201,8 +171,8 @@ public final class PHCTaskDialogCheck {
      */
     private static void checkCellRun(ImageData<BufferedImage> imageData, PathObject annotation,
                                      PythonBridge bridge, File outDir) throws Exception {
-        PHCParameters settings = new PHCParameters(1, 100, 100, "PI", 20, 10, 4, "ward", 0.5,
-                -1, true, CELL_MDS_MAX, PHCParameters.MODE_CELLS, false, false, 0);
+        PHCParameters settings = new PHCParameters(1, 100, "PI", 20, 10, 4, "ward", 0.5, -1,
+                true, CELL_MDS_MAX, false, false, 0);
         PHCTask task = new PHCTask(imageData, annotation, settings, bridge, null);
         int nCells = SyntheticSlide.nCellsInside();
         ProgressDialog dialog = openDialog(task, PHCCommand.progressHeader(settings, nCells,
@@ -211,14 +181,13 @@ public final class PHCTaskDialogCheck {
                 "per-cell dialog header: " + onFx(dialog::getHeaderText));
         List<String> messages = new CopyOnWriteArrayList<>();
         task.messageProperty().addListener((obs, old, message) -> messages.add(message));
-        int nTiles = PHCPipeline.existingTiles(annotation).size();
         startAndWait(task, () -> { }, null);
 
         PHCPipeline.Result result = onFx(task::getValue);
         check(onFx(task::getState) == javafx.concurrent.Worker.State.SUCCEEDED && result != null
-                        && result.cells().size() == nCells && result.tiles().isEmpty(),
+                        && result.cells().size() == nCells,
                 "per-cell task succeeds with " + (result == null ? 0 : result.cells().size())
-                        + " cell results and no tiles");
+                        + " cell results");
         check(messages.stream().anyMatch(m -> m.matches(CELL_PROGRESS_PATTERN)),
                 "per-cell dialog counts cells, e.g. '" + messages.stream()
                         .filter(m -> m.matches(CELL_PROGRESS_PATTERN)).findFirst()
@@ -232,12 +201,9 @@ public final class PHCTaskDialogCheck {
         }
         PathObjectHierarchy hierarchy = imageData.getHierarchy();
         onFx(() -> PHCPipeline.applyCellResults(hierarchy, result, false));
-        check(PHCPipeline.existingTiles(annotation).size() == nTiles,
-                "applying per-cell results leaves the " + nTiles + " tiles alone");
         List<PathObject> clustered = PHCPipeline.clusteredCells(hierarchy, annotation);
-        checkViewer(hierarchy, clustered, result.mds(), ProgressTracker.CELLS_NOUN,
-                new File(outDir, "mds_cells_2d_view.png"),
-                new File(outDir, "mds_cells_3d_view.png"), PathObject::isCell);
+        checkViewer(hierarchy, clustered, result.mds(), new File(outDir, "mds_cells_2d_view.png"),
+                new File(outDir, "mds_cells_3d_view.png"));
         System.out.println("  " + PHCCommand.cellSummary(result, 0));
     }
 
@@ -254,8 +220,8 @@ public final class PHCTaskDialogCheck {
     private static void checkSpatialCellRun(ImageData<BufferedImage> imageData,
                                             PathObject annotation, PythonBridge bridge)
             throws Exception {
-        PHCParameters settings = new PHCParameters(1, 100, 100, "PI", 20, 10, 4, "ward", 0.5,
-                -1, false, CELL_MDS_MAX, PHCParameters.MODE_CELLS, false, true, 0);
+        PHCParameters settings = new PHCParameters(1, 100, "PI", 20, 10, 4, "ward", 0.5, -1,
+                false, CELL_MDS_MAX, false, true, 0);
         PHCTask task = new PHCTask(imageData, annotation, settings, bridge, null);
         int nCells = SyntheticSlide.nCellsInside();
         ProgressDialog dialog = openDialog(task, PHCCommand.progressHeader(settings, nCells,
@@ -282,42 +248,37 @@ public final class PHCTaskDialogCheck {
     }
 
     /**
-     * Opens the MDS viewer on tiles or cells, saves both tabs, and checks the plots use the
-     * cluster colours, a click selects and centres on the object, a QuPath selection
+     * Opens the MDS viewer on the clustered cells, saves both tabs, and checks the plots use
+     * the cluster colours, a click selects and centres on the cell, a QuPath selection
      * highlights the point, and closing the window stops listening.
      *
-     * @param hierarchy (PathObjectHierarchy) Hierarchy holding the objects.
-     * @param objects (List of PathObject) PHC tiles, or clustered cells.
+     * @param hierarchy (PathObjectHierarchy) Hierarchy holding the cells.
+     * @param objects (List of PathObject) Clustered cells.
      * @param mds (PythonBridge.MdsResult) MDS summary of the run, may be null.
-     * @param noun (String) {@link ProgressTracker#WINDOWS_NOUN} or
-     *        {@link ProgressTracker#CELLS_NOUN}.
      * @param view2d (File) PNG the 2D tab is saved to.
      * @param view3d (File) PNG the 3D tab is saved to.
-     * @param isExpectedKind (Predicate of PathObject) True for a tile (or a cell).
      * @return (void)
      * @throws Exception When the viewer fails or a snapshot cannot be written.
      */
     private static void checkViewer(PathObjectHierarchy hierarchy, List<PathObject> objects,
-                                    PythonBridge.MdsResult mds, String noun, File view2d,
-                                    File view3d, Predicate<PathObject> isExpectedKind)
+                                    PythonBridge.MdsResult mds, File view2d, File view3d)
             throws Exception {
-        List<PathObject> embedded = PHCPipeline.embeddedTiles(objects);
+        List<PathObject> embedded = PHCPipeline.embeddedCells(objects);
         check(mds != null && !embedded.isEmpty(), "the run has an MDS embedding of "
-                + embedded.size() + " " + noun + ": " + mds);
+                + embedded.size() + " cells: " + mds);
         if (embedded.isEmpty() || mds == null) {
             return;
         }
         AtomicReference<PathObject> centred = new AtomicReference<>();
         MDSViewer viewer = onFx(() -> {
             MDSViewer created = new MDSViewer(objects, hierarchy, mds.stress2d(),
-                    mds.stress3d(), null, "synthetic", centred::set, noun);
+                    mds.stress3d(), null, "synthetic", centred::set);
             created.show(null);
             return created;
         });
         Thread.sleep(RENDER_WAIT_MS);
-        check(onFx(() -> viewer.getStage().getTitle()).contains(noun),
-                "viewer title names the " + noun + ": " + onFx(() -> viewer.getStage()
-                        .getTitle()));
+        check(onFx(() -> viewer.getStage().getTitle()).contains("cells"),
+                "viewer title names the cells: " + onFx(() -> viewer.getStage().getTitle()));
 
         onFx(() -> {
             viewer.saveSnapshot(MDSViewer.TAB_2D, view2d);
@@ -368,26 +329,24 @@ public final class PHCTaskDialogCheck {
         });
         boolean samePoint = clicked != null && onFx(() -> viewer.canvasPosition(clicked)
                 .distance(viewer.canvasPosition(target)) < 1.0);
-        String kind = ProgressTracker.CELLS_NOUN.equals(noun) ? "cell" : "tile";
-        check(samePoint && isExpectedKind.test(clicked), "clicking a 2D point selects its "
-                + kind + " in QuPath");
+        check(samePoint && clicked.isCell(), "clicking a 2D point selects its cell in QuPath");
         check(centred.get() == clicked && clicked != null, "the click centres the viewer on "
-                + "the " + kind);
-        check(onFx(viewer::highlightedTile) == clicked, "the clicked point is highlighted");
+                + "the cell");
+        check(onFx(viewer::highlightedCell) == clicked, "the clicked point is highlighted");
 
         PathObject other = embedded.get(0);
         onFx(() -> {
             hierarchy.getSelectionModel().setSelectedObject(other);
             return null;
         });
-        check(onFx(viewer::highlightedTile) == other, "selecting a " + kind + " in QuPath "
-                + "highlights its point");
+        check(onFx(viewer::highlightedCell) == other, "selecting a cell in QuPath highlights "
+                + "its point");
         onFx(() -> {
             viewer.close();
             hierarchy.getSelectionModel().setSelectedObject(target);
             return null;
         });
-        check(onFx(viewer::highlightedTile) == other && !onFx(viewer.getStage()::isShowing),
+        check(onFx(viewer::highlightedCell) == other && !onFx(viewer.getStage()::isShowing),
                 "closing the viewer stops it following the selection");
     }
 

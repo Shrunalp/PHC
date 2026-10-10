@@ -4,8 +4,8 @@
  * Contents
  * --------
  * PHCCommand : class
- *     Checks for detected cells, shows the parameter dialog, runs PHC, adds the heatmap tiles
- *     or per-cell measurements and opens the MDS viewer.
+ *     Checks for detected cells, shows the parameter dialog, runs PHC, puts the results on
+ *     the cells and opens the MDS viewer.
  */
 
 package qupath.ext.phc;
@@ -16,7 +16,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.DecimalFormat;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CancellationException;
@@ -43,9 +42,8 @@ import qupath.lib.projects.ProjectImageEntry;
 
 /**
  * Connects the PHC pipeline to QuPath's GUI: it checks the selection and its detected cells,
- * asks for settings, runs the analysis off the JavaFX thread, puts the heatmap tiles under
- * the annotation (tiled windows) or the measurements on its cells (per-cell windows) and
- * opens the MDS viewer. Remembers the open viewer, so a new run replaces it.
+ * asks for settings, runs the analysis off the JavaFX thread, puts the measurements on its
+ * cells and opens the MDS viewer. Remembers the open viewer, so a new run replaces it.
  */
 public final class PHCCommand {
 
@@ -59,7 +57,7 @@ public final class PHCCommand {
     private final StringProperty phcLibraryDir;
     private final ParameterList params = PHCParameters.createParameterList();  // kept per session
     private MDSViewer mdsViewer;          // open MDS window, or null
-    private PathObject mdsAnnotation;     // annotation whose tiles or cells mdsViewer shows
+    private PathObject mdsAnnotation;     // annotation whose cells mdsViewer shows
 
     /**
      * Creates the command for one QuPath window.
@@ -146,33 +144,25 @@ public final class PHCCommand {
      * @param nCells (int) Detected cells inside the annotation.
      * @param calibration (PixelCalibration) Image calibration, which decides whether lengths
      *        are micrometres or pixels.
-     * @return (String) Header text, e.g. "Alpha PHC on 1234 cells, 100 µm windows (stride
-     *         100 µm), PI, 4 clusters", or in per-cell mode "Alpha PHC per cell on 1234
-     *         cells, 100 µm windows centred on each cell, PI, 4 clusters" (followed by
-     *         ", Delaunay-constrained" for spatially constrained clustering).
+     * @return (String) Header text, e.g. "Alpha PHC per cell on 1234 cells, 100 µm windows
+     *         centred on each cell, PI, 4 clusters" (followed by ", Delaunay-constrained" for
+     *         spatially constrained clustering).
      */
     static String progressHeader(PHCParameters settings, int nCells,
                                  PixelCalibration calibration) {
         String unit = calibration.hasPixelSizeMicrons() ? GeneralTools.micrometerSymbol() : "px";
         DecimalFormat lengths = new DecimalFormat(LENGTH_FORMAT);
-        String header;
-        if (settings.isCellMode()) {
-            header = String.format("Alpha PHC per cell on %d cells, %s %s windows centred on "
-                            + "each cell, %s, %d clusters", nCells,
-                    lengths.format(settings.windowSize()), unit, settings.vectorization(),
-                    settings.nClusters()) + (settings.isSpatial() ? SPATIAL_HEADER : "");
-        } else {
-            header = String.format("Alpha PHC on %d cells, %s %s windows (stride %s %s), "
-                            + "%s, %d clusters", nCells, lengths.format(settings.windowSize()),
-                    unit, lengths.format(settings.stride()), unit, settings.vectorization(),
-                    settings.nClusters());
-        }
+        String header = String.format("Alpha PHC per cell on %d cells, %s %s windows centred on "
+                        + "each cell, %s, %d clusters", nCells,
+                lengths.format(settings.windowSize()), unit, settings.vectorization(),
+                settings.nClusters()) + (settings.isSpatial() ? SPATIAL_HEADER : "");
         return header;
     }
 
     /**
-     * Removes the PHC results of the selected annotation: its heatmap tiles, the per-cell PHC
-     * measurements on its cells, and classes PHC gave its cells (the originals come back).
+     * Removes the PHC results of the selected annotation: the PHC measurements on its cells,
+     * classes PHC gave its cells (the originals come back), and heatmap tiles left by versions
+     * before 0.6.2.
      *
      * @return (void)
      */
@@ -182,20 +172,14 @@ public final class PHCCommand {
         if (annotation == null) {
             return;
         }
-        List<PathObject> oldTiles = PHCPipeline.existingTiles(annotation);
-        imageData.getHierarchy().removeObjects(oldTiles, true);
-        PHCPipeline.ClearedCells cleared = PHCPipeline.clearCellResults(
-                imageData.getHierarchy(), annotation);
-        PHCPipeline.storeMdsSummary(annotation, null, PHCParameters.MODE_WINDOWS);
-        PHCPipeline.storeMdsSummary(annotation, null, PHCParameters.MODE_CELLS);
-        PHCPipeline.storeClusteringSummary(annotation, null);
-        imageData.getHierarchy().fireObjectMeasurementsChangedEvent(this, List.of(annotation));
+        PHCPipeline.ClearedResults cleared = PHCPipeline.clearResults(imageData.getHierarchy(),
+                annotation);
         if (annotation == mdsAnnotation) {
             closeViewer();
         }
-        String message = "Removed " + oldTiles.size() + " PHC tiles";
-        if (cleared.nCleaned() > 0) {
-            message += " and the PHC measurements of " + cleared.nCleaned() + " cells";
+        String message = "Removed the PHC measurements of " + cleared.nCleaned() + " cells";
+        if (cleared.nTiles() > 0) {
+            message += " and " + cleared.nTiles() + " PHC tiles of an earlier version";
         }
         if (cleared.nRestored() > 0) {
             message += "; restored the original class of " + cleared.nRestored() + " cells";
@@ -220,9 +204,8 @@ public final class PHCCommand {
     }
 
     /**
-     * Opens the MDS plot of the selected annotation again, from its tiles' or cells'
-     * measurements, e.g. after the project was closed and reopened. When both tiled and
-     * per-cell results have MDS coordinates, asks which to show.
+     * Opens the MDS plot of the selected annotation again, from its cells' measurements, e.g.
+     * after the project was closed and reopened.
      *
      * @return (void)
      */
@@ -232,68 +215,30 @@ public final class PHCCommand {
         if (annotation == null) {
             return;
         }
-        List<PathObject> tiles = PHCPipeline.existingTiles(annotation);
         List<PathObject> cells = PHCPipeline.clusteredCells(imageData.getHierarchy(), annotation);
-        if (tiles.isEmpty() && cells.isEmpty()) {
+        if (cells.isEmpty()) {
             Dialogs.showErrorMessage(TITLE, "This annotation has no PHC results. Run PHC on it "
                     + "first (Extensions > PHC > Run PHC on selected annotation).");
             return;
         }
-        List<String> choices = new ArrayList<>();
-        if (!PHCPipeline.embeddedTiles(tiles).isEmpty()) {
-            choices.add(PHCParameters.MODE_LABELS.get(0));
-        }
-        if (!PHCPipeline.embeddedTiles(cells).isEmpty()) {
-            choices.add(PHCParameters.MODE_LABELS.get(1));
-        }
-        if (choices.isEmpty()) {
+        if (PHCPipeline.embeddedCells(cells).isEmpty()) {
             Dialogs.showErrorMessage(TITLE, "This annotation's PHC results have no MDS "
                     + "measurements. Run PHC again with 'Compute MDS embedding' switched on.");
             return;
         }
-        String choice = choices.size() == 1 ? choices.get(0)
-                : Dialogs.showChoiceDialog(TITLE, "This annotation has MDS results for tiled "
-                        + "and per-cell windows. Show which?", choices, choices.get(0));
-        if (choice == null) {
-            return;
-        }
-        String mode = PHCParameters.modeForLabel(choice);
         PythonBridge.PlotTarget plots = plotTarget(imageData, annotation);
-        boolean plotsExist = plots != null
-                && plots.files(mode).stream().allMatch(Files::exists);
+        boolean plotsExist = plots != null && plots.files().stream().allMatch(Files::exists);
         MeasurementList measurements = annotation.getMeasurementList();
-        String[] stressNames = PHCPipeline.stressNames(mode);
-        openViewer(imageData, annotation,
-                PHCParameters.MODE_CELLS.equals(mode) ? cells : tiles,
-                measuredOrNull(measurements, stressNames[0]),
-                measuredOrNull(measurements, stressNames[1]),
-                plotsExist ? plots : null, mode);
+        openViewer(imageData, annotation, cells,
+                measuredOrNull(measurements, PHCPipeline.MEASUREMENT_CELLS_MDS2_STRESS),
+                measuredOrNull(measurements, PHCPipeline.MEASUREMENT_CELLS_MDS3_STRESS),
+                plotsExist ? plots : null);
     }
 
     /**
-     * Applies a finished run: tiles for tiled windows, cell measurements (and classes) for
-     * per-cell windows. Runs on the JavaFX thread (the task's success handler).
-     *
-     * @param imageData (ImageData of BufferedImage) Image whose hierarchy is updated.
-     * @param annotation (PathObject) Parent annotation.
-     * @param settings (PHCParameters) Settings of the run.
-     * @param result (PHCPipeline.Result) New tiles or cell results, MDS summary and plots.
-     * @param seconds (double) Total run time, reported to the user.
-     * @return (void)
-     */
-    private void showResult(ImageData<BufferedImage> imageData, PathObject annotation,
-                            PHCParameters settings, PHCPipeline.Result result, double seconds) {
-        if (settings.isCellMode()) {
-            showCellResult(imageData, annotation, settings, result, seconds);
-        } else {
-            showTileResult(imageData, annotation, result, seconds);
-        }
-    }
-
-    /**
-     * Puts per-cell results on the annotation's cells (no tiles are added or removed), stores
-     * the per-cell MDS stress and Delaunay summary on the annotation and opens the MDS viewer
-     * when MDS ran.
+     * Applies a finished run: puts the results on the annotation's cells (and classes when
+     * asked), stores the MDS stress and Delaunay summary on the annotation and opens the MDS
+     * viewer when MDS ran. Runs on the JavaFX thread (the task's success handler).
      *
      * @param imageData (ImageData of BufferedImage) Image whose hierarchy is updated.
      * @param annotation (PathObject) Annotation PHC ran on.
@@ -302,13 +247,12 @@ public final class PHCCommand {
      * @param seconds (double) Total run time, reported to the user.
      * @return (void)
      */
-    private void showCellResult(ImageData<BufferedImage> imageData, PathObject annotation,
-                                PHCParameters settings, PHCPipeline.Result result,
-                                double seconds) {
+    private void showResult(ImageData<BufferedImage> imageData, PathObject annotation,
+                            PHCParameters settings, PHCPipeline.Result result, double seconds) {
         PathObjectHierarchy hierarchy = imageData.getHierarchy();
         int nReclassified = PHCPipeline.applyCellResults(hierarchy, result,
                 settings.classifyCells());
-        PHCPipeline.storeMdsSummary(annotation, result.mds(), PHCParameters.MODE_CELLS);
+        PHCPipeline.storeMdsSummary(annotation, result.mds());
         PHCPipeline.storeClusteringSummary(annotation, result.clustering());
         hierarchy.fireObjectMeasurementsChangedEvent(this, List.of(annotation));
         String message = cellSummary(result, seconds);
@@ -323,18 +267,18 @@ public final class PHCCommand {
                 .filter(cell -> cell.getMeasurementList()
                         .containsKey(PHCPipeline.MEASUREMENT_CLUSTER))
                 .toList();
-        if (result.mds() != null && !PHCPipeline.embeddedTiles(clustered).isEmpty()) {
+        if (result.mds() != null && !PHCPipeline.embeddedCells(clustered).isEmpty()) {
             openViewer(imageData, annotation, clustered, result.mds().stress2d(),
-                    result.mds().stress3d(), result.plots(), PHCParameters.MODE_CELLS);
+                    result.mds().stress3d(), result.plots());
         } else if (annotation == mdsAnnotation) {
             closeViewer();  // it may show values that were just replaced
         }
     }
 
     /**
-     * Summarises a per-cell run for the notification.
+     * Summarises a run for the notification.
      *
-     * @param result (PHCPipeline.Result) Per-cell result.
+     * @param result (PHCPipeline.Result) Result of the run.
      * @param seconds (double) Total run time.
      * @return (String) e.g. "Computed local PH for 3200 cells; 3150 clustered into 4 clusters
      *         in 12.3 s. Use Measure > Show measurement maps > 'PHC: cluster'.", or for
@@ -383,7 +327,7 @@ public final class PHCCommand {
         if (result.plots() != null) {
             plotsNote = " MDS plots saved in " + result.plots().dir();
             Path delaunay = result.plots().delaunayPlot();
-            if (PHCParameters.MODE_CELLS.equals(result.mode()) && Files.exists(delaunay)) {
+            if (Files.exists(delaunay)) {
                 plotsNote += ", with the Delaunay graph in " + delaunay.getFileName();
             }
             plotsNote += ".";
@@ -395,62 +339,31 @@ public final class PHCCommand {
     }
 
     /**
-     * Replaces any earlier PHC tiles under the annotation with the new ones, stores the MDS
-     * stress on the annotation and opens the MDS viewer when MDS ran.
+     * Opens the MDS viewer for an annotation's clustered cells, closing any earlier one.
+     * Clicking a point selects the cell and centres the QuPath viewer on it.
      *
-     * @param imageData (ImageData of BufferedImage) Image whose hierarchy is updated.
-     * @param annotation (PathObject) Parent annotation.
-     * @param result (PHCPipeline.Result) New heatmap tiles, MDS summary and plot files.
-     * @param seconds (double) Total run time, reported to the user.
-     * @return (void)
-     */
-    private void showTileResult(ImageData<BufferedImage> imageData, PathObject annotation,
-                                PHCPipeline.Result result, double seconds) {
-        PathObjectHierarchy hierarchy = imageData.getHierarchy();
-        hierarchy.removeObjects(PHCPipeline.existingTiles(annotation), true);
-        annotation.addChildObjects(result.tiles());
-        PHCPipeline.storeMdsSummary(annotation, result.mds(), PHCParameters.MODE_WINDOWS);
-        hierarchy.fireHierarchyChangedEvent(annotation);
-        String plotsNote = notes(result);
-        Dialogs.showInfoNotification(TITLE, String.format("Added %d tiles in %.1f s. For a "
-                + "continuous heatmap use Measure > Show measurement maps > '%s'.%s",
-                result.tiles().size(), seconds, PHCPipeline.MEASUREMENT_L2_NORM, plotsNote));
-        if (result.mds() != null && !PHCPipeline.embeddedTiles(result.tiles()).isEmpty()) {
-            openViewer(imageData, annotation, result.tiles(), result.mds().stress2d(),
-                    result.mds().stress3d(), result.plots(), PHCParameters.MODE_WINDOWS);
-        } else if (annotation == mdsAnnotation) {
-            closeViewer();  // it shows tiles that were just replaced
-        }
-    }
-
-    /**
-     * Opens the MDS viewer for an annotation's tiles or clustered cells, closing any earlier
-     * one. Clicking a point selects the tile or cell and centres the QuPath viewer on it.
-     *
-     * @param imageData (ImageData of BufferedImage) Image holding the tiles or cells.
+     * @param imageData (ImageData of BufferedImage) Image holding the cells.
      * @param annotation (PathObject) Annotation PHC ran on.
-     * @param tiles (List of PathObject) PHC tiles of the annotation, or its clustered cells.
+     * @param cells (List of PathObject) Clustered cells of the annotation.
      * @param stress2d (Double) Stress of the 2D embedding, or null when unknown.
      * @param stress3d (Double) Stress of the 3D embedding, or null when unknown.
      * @param plots (PythonBridge.PlotTarget) Where Python saved its plots, or null.
-     * @param mode (String) {@link PHCParameters#MODE_WINDOWS} or {@link PHCParameters#MODE_CELLS}.
      * @return (void)
      */
     private void openViewer(ImageData<BufferedImage> imageData, PathObject annotation,
-                            List<PathObject> tiles, Double stress2d, Double stress3d,
-                            PythonBridge.PlotTarget plots, String mode) {
+                            List<PathObject> cells, Double stress2d, Double stress3d,
+                            PythonBridge.PlotTarget plots) {
         closeViewer();
         String prefix = plots != null ? plots.prefix()
                 : PHCPipeline.plotTarget(Path.of(""), imageName(imageData), annotation).prefix();
-        mdsViewer = new MDSViewer(tiles, imageData.getHierarchy(), stress2d, stress3d,
-                plots == null ? null : plots.dir(), prefix, tile -> {
+        mdsViewer = new MDSViewer(cells, imageData.getHierarchy(), stress2d, stress3d,
+                plots == null ? null : plots.dir(), prefix, cell -> {
                     QuPathViewer viewer = qupath.getViewer();
                     if (viewer != null && viewer.getImageData() == imageData) {
-                        viewer.setCenterPixelLocation(tile.getROI().getCentroidX(),
-                                tile.getROI().getCentroidY());
+                        viewer.setCenterPixelLocation(cell.getROI().getCentroidX(),
+                                cell.getROI().getCentroidY());
                     }
-                }, PHCParameters.MODE_CELLS.equals(mode) ? ProgressTracker.CELLS_NOUN
-                        : ProgressTracker.WINDOWS_NOUN);
+                });
         mdsAnnotation = annotation;
         mdsViewer.show(qupath.getStage());
     }

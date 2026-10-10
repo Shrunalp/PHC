@@ -1,17 +1,17 @@
 /*
- * GUI-free PHC run: export an annotation's cells, run the Python bridge, build heatmap tiles or
- * put per-cell results on the cells.
+ * GUI-free PHC run: export an annotation's cells, run the Python bridge and put the per-cell
+ * results on the cells; also clears them again.
  *
  * Contents
  * --------
  * PHCPipeline : class
- *     Runs PHC on one annotation; turns each window into a tile, or measures each cell.
+ *     Runs PHC on one annotation and measures (optionally classifies) each cell.
  * PHCPipeline.Result : record
- *     The tiles or per-cell results of one run plus its MDS summary and plot files.
+ *     The per-cell results of one run plus its MDS summary and plot files.
  * PHCPipeline.CellAssignment : record
  *     One exported cell paired with the bridge's result for the window centred on it.
- * PHCPipeline.ClearedCells : record
- *     How many cells lost their PHC measurements and had their class restored.
+ * PHCPipeline.ClearedResults : record
+ *     How many legacy tiles were removed and cells lost their PHC results.
  */
 
 package qupath.ext.phc;
@@ -33,25 +33,24 @@ import qupath.lib.common.GeneralTools;
 import qupath.lib.images.ImageData;
 import qupath.lib.measurements.MeasurementList;
 import qupath.lib.objects.PathObject;
-import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
-import qupath.lib.roi.ROIs;
-import qupath.lib.roi.interfaces.ROI;
 
 /**
  * Runs the whole PHC analysis for one annotation without touching the GUI, so it can be used
  * from the menu command, scripts or tests. PHC is the alpha persistence of the centroids of
- * the cells detected inside the annotation. In tiled-window mode each window becomes a tile
- * coloured by its agglomerative cluster, with its cell count, L2 measures and (when MDS ran)
- * its 2D and 3D MDS coordinates stored as measurements. In per-cell mode the same measurements
- * go onto the cells themselves (see {@link #applyCellResults}), and no tiles are made.
+ * the cells detected inside the annotation, in one window centred on each cell. Each cell
+ * gets its window's neighbour count, coverage, agglomerative cluster, L2 measures and (when
+ * MDS ran) its 2D and 3D MDS coordinates as measurements (see {@link #applyCellResults}).
  */
 public final class PHCPipeline {
 
     private static final Logger logger = LoggerFactory.getLogger(PHCPipeline.class);
 
-    /** Prefix of the classes given to heatmap tiles; also used to find tiles to replace. */
+    /**
+     * Prefix of the classes given to classified cells; also finds the heatmap tiles that
+     * versions before 0.6.2 made, so Clear can remove them.
+     */
     public static final String CLASS_PREFIX = "PHC cluster ";
 
     /** Cluster number, 1 = lowest mean L2 norm. */
@@ -60,13 +59,11 @@ public final class PHCPipeline {
     public static final String MEASUREMENT_L2_NORM = "PHC: L2 norm";
     /** L2 distance from the window's vector to the ROI's mean vector (how atypical it is). */
     public static final String MEASUREMENT_L2_TO_MEAN = "PHC: L2 distance to ROI mean";
-    /** Fraction of the window that lies inside the annotation. */
+    /** Fraction of the cell's window that lies inside the annotation. */
     public static final String MEASUREMENT_COVERAGE = "PHC: ROI coverage";
-    /** Number of cell centroids in the window. */
-    public static final String MEASUREMENT_CELL_COUNT = "PHC: cell count";
-    /** Per-cell mode: centroids in the window centred on the cell, the cell included. */
+    /** Centroids in the window centred on the cell, the cell included. */
     public static final String MEASUREMENT_CELLS_IN_WINDOW = "PHC: cells in window";
-    /** 2D metric MDS coordinates of the window's persistence vector (tiles that were embedded). */
+    /** 2D metric MDS coordinates of the window's persistence vector (cells that were embedded). */
     public static final String MEASUREMENT_MDS2_X = "PHC: MDS2 x";
     public static final String MEASUREMENT_MDS2_Y = "PHC: MDS2 y";
     /** 3D metric MDS coordinates of the window's persistence vector. */
@@ -74,12 +71,12 @@ public final class PHCPipeline {
     public static final String MEASUREMENT_MDS3_Y = "PHC: MDS3 y";
     public static final String MEASUREMENT_MDS3_Z = "PHC: MDS3 z";
     /** Kruskal stress-1 of the 2D / 3D embedding, stored on the annotation. */
-    public static final String MEASUREMENT_MDS2_STRESS = "PHC: MDS2 stress";
-    public static final String MEASUREMENT_MDS3_STRESS = "PHC: MDS3 stress";
-    /** Per-cell mode stress, on the annotation, named apart so both modes' results coexist. */
     public static final String MEASUREMENT_CELLS_MDS2_STRESS = "PHC cells: MDS2 stress";
     public static final String MEASUREMENT_CELLS_MDS3_STRESS = "PHC cells: MDS3 stress";
-    /** Spatially constrained per-cell runs: undirected edges of the Delaunay adjacency used. */
+    /** Annotation stress of tiled runs before 0.6.2; only removed, by Clear. */
+    public static final List<String> LEGACY_TILE_STRESS = List.of("PHC: MDS2 stress",
+            "PHC: MDS3 stress");
+    /** Spatially constrained runs: undirected edges of the Delaunay adjacency used. */
     public static final String MEASUREMENT_CELLS_DELAUNAY_EDGES = "PHC cells: Delaunay edges";
     /** Connected parts of the Delaunay graph before Python joined them at their closest cells. */
     public static final String MEASUREMENT_CELLS_DELAUNAY_COMPONENTS =
@@ -91,7 +88,7 @@ public final class PHCPipeline {
      */
     public static final String ORIGINAL_CLASS_KEY = "phc.originalClass";
 
-    /** Every measurement a per-cell run may put on a cell, removed by Clear. */
+    /** Every measurement a run may put on a cell, removed by Clear. */
     public static final List<String> CELL_MEASUREMENTS = List.of(MEASUREMENT_CLUSTER,
             MEASUREMENT_L2_NORM, MEASUREMENT_L2_TO_MEAN, MEASUREMENT_COVERAGE,
             MEASUREMENT_CELLS_IN_WINDOW, MEASUREMENT_MDS2_X, MEASUREMENT_MDS2_Y,
@@ -114,27 +111,25 @@ public final class PHCPipeline {
     private static final int[][] RAMP = {
             {68, 1, 84}, {59, 82, 139}, {33, 145, 140}, {94, 201, 98}, {253, 231, 37}};
 
-    private static final int NOT_CLUSTERED = -1;  // bridge label for windows left out
+    private static final int NOT_CLUSTERED = -1;  // bridge label for cells left out
 
     private PHCPipeline() {
     }
 
     /**
      * Exports the annotation's cells and runs PHC on them through the Python bridge, reporting
-     * each stage to a listener (e.g. a progress bar). Builds one tile per clustered window
-     * (tiled-window mode) or pairs each cell with its result (per-cell mode), keeps the MDS
-     * summary and optionally asks Python to save its MDS plots and CSV. Does not modify the
-     * hierarchy; use {@link #applyCellResults} for per-cell results.
+     * each stage to a listener (e.g. a progress bar). Pairs each cell with its result, keeps
+     * the MDS summary and optionally asks Python to save its MDS plots and CSV. Does not modify
+     * the hierarchy; use {@link #applyCellResults} for that.
      *
      * @param imageData (ImageData of BufferedImage) Image the annotation belongs to.
      * @param annotation (PathObject) Annotation with an area ROI.
      * @param params (PHCParameters) Validated settings.
      * @param bridge (PythonBridge) Bridge configured with the user's Python.
-     * @param listener (PythonBridge.ProgressListener) Receives stage and window-count updates.
+     * @param listener (PythonBridge.ProgressListener) Receives stage and cell-count updates.
      * @param plots (PythonBridge.PlotTarget) Existing folder and prefix for the plot files, or
      *        null to write none.
-     * @return (Result) Tiles (tiled-window mode) or cell assignments (per-cell mode), the MDS
-     *         summary (null when MDS did not run) and plots.
+     * @return (Result) Cell assignments, the MDS summary (null when MDS did not run) and plots.
      * @throws IOException When the cells cannot be written or Python fails.
      * @throws IllegalArgumentException When the annotation holds no detected cells (run cell
      *         detection first) or the settings are invalid.
@@ -153,27 +148,18 @@ public final class PHCPipeline {
         double pixelSize = PHCParameters.pixelSizeMicrons(
                 imageData.getServer().getPixelCalibration());
         if (!imageData.getServer().getPixelCalibration().hasPixelSizeMicrons()) {
-            logger.warn("The image has no pixel size; PHC window size and stride are read as "
-                    + "pixels");
+            logger.warn("The image has no pixel size; PHC window size and edge length are read "
+                    + "as pixels");
         }
         PythonBridge.BridgeResult bridgeResult = bridge.run(cells, params, pixelSize, listener,
                 plots);
-        List<PathObject> tiles = List.of();
-        List<CellAssignment> assignments = List.of();
-        int nClustered;
-        if (params.isCellMode()) {
-            listener.update(ProgressTracker.CELLS, 0, 0);
-            assignments = assignCells(bridgeResult, cells);
-            nClustered = bridgeResult.nCellsClustered();
-        } else {
-            listener.update(ProgressTracker.TILES, 0, 0);
-            tiles = buildTiles(bridgeResult, cells, annotation.getROI());
-            nClustered = bridgeResult.nWindowsClustered();
-        }
+        listener.update(ProgressTracker.CELLS, 0, 0);
+        List<CellAssignment> assignments = assignCells(bridgeResult, cells);
         boolean wrotePlots = plots != null && bridgeResult.mds() != null;
-        Result result = new Result(params.mode(), tiles, assignments, bridgeResult.nClusters(),
-                nClustered, bridgeResult.nSkipped(), bridgeResult.clustering(),
-                bridgeResult.mds(), wrotePlots ? plots : null, bridgeResult.warnings());
+        Result result = new Result(assignments, bridgeResult.nClusters(),
+                bridgeResult.nCellsClustered(), bridgeResult.nSkipped(),
+                bridgeResult.clustering(), bridgeResult.mds(), wrotePlots ? plots : null,
+                bridgeResult.warnings());
         return result;
     }
 
@@ -195,7 +181,7 @@ public final class PHCPipeline {
     }
 
     /**
-     * Writes a per-cell run's results onto its cells as measurements, optionally sets their
+     * Writes a run's results onto its cells as measurements, optionally sets their
      * classes to the PHC clusters, and fires the hierarchy events so QuPath redraws them.
      * Clustered cells get cluster, L2 norm, L2 distance to ROI mean, ROI coverage, cells in
      * window and (when embedded) the five MDS measurements; cells left out (cluster -1) get
@@ -208,7 +194,7 @@ public final class PHCPipeline {
      * now (left out, or classifyCells off) get their original class back.
      *
      * @param hierarchy (PathObjectHierarchy) Hierarchy holding the cells.
-     * @param result (Result) Per-cell result from {@link #analyse}.
+     * @param result (Result) Result from {@link #analyse}.
      * @param classifyCells (boolean) Whether to set cell classes to the PHC clusters.
      * @return (int) Number of cells whose class changed.
      */
@@ -229,7 +215,13 @@ public final class PHCPipeline {
                     measurements.put(MEASUREMENT_CLUSTER, values.cluster() + 1);
                     measurements.put(MEASUREMENT_L2_NORM, values.l2Norm());
                     measurements.put(MEASUREMENT_L2_TO_MEAN, values.l2ToMean());
-                    putMds(measurements, values.mds2(), values.mds3());
+                    if (values.mds2() != null && values.mds3() != null) {
+                        measurements.put(MEASUREMENT_MDS2_X, values.mds2()[0]);
+                        measurements.put(MEASUREMENT_MDS2_Y, values.mds2()[1]);
+                        measurements.put(MEASUREMENT_MDS3_X, values.mds3()[0]);
+                        measurements.put(MEASUREMENT_MDS3_Y, values.mds3()[1]);
+                        measurements.put(MEASUREMENT_MDS3_Z, values.mds3()[2]);
+                    }
                 }
             }
             measured.add(cell);
@@ -254,16 +246,20 @@ public final class PHCPipeline {
     }
 
     /**
-     * Removes per-cell PHC results from an annotation's cells: their PHC measurements go, and
-     * classes set by PHC are restored. Fires the hierarchy events; call it on the JavaFX thread
-     * when QuPath shows the hierarchy. Tiles are not touched.
+     * Removes every PHC result of an annotation: the PHC measurements of its cells (classes
+     * set by PHC are restored), its MDS stress and Delaunay summary, and what versions before
+     * 0.6.2 left (heatmap tiles and their stress measurements). Fires the hierarchy events;
+     * call it on the JavaFX thread when QuPath shows the hierarchy.
      *
      * @param hierarchy (PathObjectHierarchy) Hierarchy the annotation belongs to.
-     * @param annotation (PathObject) Annotation whose cells are cleaned.
-     * @return (ClearedCells) Cells that had PHC measurements, and cells whose class came back.
+     * @param annotation (PathObject) Annotation whose results are removed.
+     * @return (ClearedResults) Legacy tiles removed, cells that had PHC measurements, and cells
+     *         whose class came back.
      */
-    public static ClearedCells clearCellResults(PathObjectHierarchy hierarchy,
-                                                PathObject annotation) {
+    public static ClearedResults clearResults(PathObjectHierarchy hierarchy,
+                                              PathObject annotation) {
+        List<PathObject> tiles = legacyTiles(annotation);
+        hierarchy.removeObjects(tiles, true);
         List<PathObject> cleaned = new ArrayList<>();
         List<PathObject> restored = new ArrayList<>();
         for (PathObject cell : CellExporter.cellsInside(hierarchy, annotation)) {
@@ -287,7 +283,14 @@ public final class PHCPipeline {
         if (!restored.isEmpty()) {
             hierarchy.fireObjectClassificationsChangedEvent(PHCPipeline.class, restored);
         }
-        ClearedCells cleared = new ClearedCells(cleaned.size(), restored.size());
+        storeMdsSummary(annotation, null);
+        storeClusteringSummary(annotation, null);
+        try (MeasurementList measurements = annotation.getMeasurementList()) {
+            measurements.removeAll(LEGACY_TILE_STRESS.toArray(new String[0]));
+        }
+        hierarchy.fireObjectMeasurementsChangedEvent(PHCPipeline.class, List.of(annotation));
+        ClearedResults cleared = new ClearedResults(tiles.size(), cleaned.size(),
+                restored.size());
         return cleared;
     }
 
@@ -309,12 +312,12 @@ public final class PHCPipeline {
     }
 
     /**
-     * Finds the cells of an annotation that carry a per-cell PHC cluster, e.g. to plot their
-     * MDS embedding again after a project is reopened.
+     * Finds the cells of an annotation that carry a PHC cluster, e.g. to plot their MDS
+     * embedding again after a project is reopened.
      *
      * @param hierarchy (PathObjectHierarchy) Hierarchy the annotation belongs to.
      * @param annotation (PathObject) Annotation PHC ran on.
-     * @return (List of PathObject) Non-tile cells inside the annotation with
+     * @return (List of PathObject) Cells inside the annotation with
      *         {@link #MEASUREMENT_CLUSTER} and {@link #MEASUREMENT_CELLS_IN_WINDOW}.
      */
     public static List<PathObject> clusteredCells(PathObjectHierarchy hierarchy,
@@ -327,71 +330,13 @@ public final class PHCPipeline {
     }
 
     /**
-     * Turns bridge results into tiles in full-resolution slide coordinates.
+     * Finds the heatmap tiles that tiled runs of versions before 0.6.2 put under an
+     * annotation, so Clear can remove them.
      *
-     * @param result (PythonBridge.BridgeResult) Per-window results from the bridge.
-     * @param cells (CellExporter.ExportedCells) What the bridge analysed; its bounding box
-     *        origin is where window positions are measured from.
-     * @param roi (ROI) Annotation ROI, whose image plane the tiles share.
-     * @return (List of PathObject) One classified, measured tile per clustered window.
-     */
-    static List<PathObject> buildTiles(PythonBridge.BridgeResult result,
-                                       CellExporter.ExportedCells cells, ROI roi) {
-        List<PathClass> classes = clusterClasses(result.nClusters());
-        List<PathObject> tiles = new ArrayList<>();
-
-        for (PythonBridge.WindowResult window : result.windows()) {
-            if (window.cluster() == NOT_CLUSTERED) {
-                continue;
-            }
-            // Bridge rows/cols are slide pixels relative to the bounding box origin
-            ROI tileRoi = ROIs.createRectangleROI(
-                    cells.originX() + window.col(),
-                    cells.originY() + window.row(),
-                    window.width(),
-                    window.height(),
-                    roi.getImagePlane());
-            PathObject tile = PathObjects.createTileObject(tileRoi,
-                    classes.get(window.cluster()));
-            try (MeasurementList measurements = tile.getMeasurementList()) {
-                measurements.put(MEASUREMENT_CLUSTER, window.cluster() + 1);
-                measurements.put(MEASUREMENT_L2_NORM, window.l2Norm());
-                measurements.put(MEASUREMENT_L2_TO_MEAN, window.l2ToMean());
-                measurements.put(MEASUREMENT_COVERAGE, window.coverage());
-                measurements.put(MEASUREMENT_CELL_COUNT, window.nCells());
-                putMds(measurements, window.mds2(), window.mds3());
-            }
-            tiles.add(tile);
-        }
-        return tiles;
-    }
-
-    /**
-     * Stores a window's 2D and 3D MDS coordinates on its tile or cell, so the MDS viewer can
-     * plot it later; stores nothing when the window was not embedded.
-     *
-     * @param measurements (MeasurementList) Open measurement list of the tile or cell.
-     * @param mds2 (double[] - size (2)) 2D MDS coordinates, or null when not embedded.
-     * @param mds3 (double[] - size (3)) 3D MDS coordinates, or null when not embedded.
-     * @return (void)
-     */
-    private static void putMds(MeasurementList measurements, double[] mds2, double[] mds3) {
-        if (mds2 != null && mds3 != null) {
-            measurements.put(MEASUREMENT_MDS2_X, mds2[0]);
-            measurements.put(MEASUREMENT_MDS2_Y, mds2[1]);
-            measurements.put(MEASUREMENT_MDS3_X, mds3[0]);
-            measurements.put(MEASUREMENT_MDS3_Y, mds3[1]);
-            measurements.put(MEASUREMENT_MDS3_Z, mds3[2]);
-        }
-    }
-
-    /**
-     * Finds heatmap tiles from an earlier PHC run, so a new run can replace them.
-     *
-     * @param annotation (PathObject) Annotation that may hold earlier PHC tiles.
+     * @param annotation (PathObject) Annotation that may hold old PHC tiles.
      * @return (List of PathObject) Child tiles whose class starts with {@link #CLASS_PREFIX}.
      */
-    public static List<PathObject> existingTiles(PathObject annotation) {
+    public static List<PathObject> legacyTiles(PathObject annotation) {
         Collection<PathObject> children = annotation.getChildObjects();
         List<PathObject> tiles = children.stream()
                 .filter(PathObject::isTile)
@@ -402,16 +347,15 @@ public final class PHCPipeline {
     }
 
     /**
-     * Picks out the PHC objects (tiles or cells) that carry MDS coordinates, e.g. to plot the
-     * embedding again after a project is reopened.
+     * Picks out the cells that carry MDS coordinates, e.g. to plot the embedding again after a
+     * project is reopened.
      *
-     * @param tiles (Collection of PathObject) PHC tiles from {@link #existingTiles}, or cells
-     *        from {@link #clusteredCells}.
-     * @return (List of PathObject) Objects with all five MDS measurements, in the same order.
+     * @param cells (Collection of PathObject) Cells, e.g. from {@link #clusteredCells}.
+     * @return (List of PathObject) Cells with all five MDS measurements, in the same order.
      */
-    public static List<PathObject> embeddedTiles(Collection<PathObject> tiles) {
-        List<PathObject> embedded = tiles.stream().filter(tile -> {
-            MeasurementList m = tile.getMeasurementList();
+    public static List<PathObject> embeddedCells(Collection<PathObject> cells) {
+        List<PathObject> embedded = cells.stream().filter(cell -> {
+            MeasurementList m = cell.getMeasurementList();
             return m.containsKey(MEASUREMENT_MDS2_X) && m.containsKey(MEASUREMENT_MDS2_Y)
                     && m.containsKey(MEASUREMENT_MDS3_X) && m.containsKey(MEASUREMENT_MDS3_Y)
                     && m.containsKey(MEASUREMENT_MDS3_Z);
@@ -420,33 +364,28 @@ public final class PHCPipeline {
     }
 
     /**
-     * Stores the MDS stress of a run in either mode on the annotation, under that mode's
-     * names ("PHC: MDS2 stress" or "PHC cells: MDS2 stress"), so tiled and per-cell results
-     * can coexist; removes that mode's old values when MDS did not run.
+     * Stores the MDS stress of a run on the annotation ("PHC cells: MDS2 stress" and
+     * "PHC cells: MDS3 stress"); removes the old values when MDS did not run.
      *
      * @param annotation (PathObject) Annotation PHC ran on.
      * @param mds (PythonBridge.MdsResult) Summary of the embedding, or null.
-     * @param mode (String) {@link PHCParameters#MODE_WINDOWS} or {@link PHCParameters#MODE_CELLS}.
      * @return (void)
-     * @throws IllegalArgumentException When mode is not a known mode.
      */
-    public static void storeMdsSummary(PathObject annotation, PythonBridge.MdsResult mds,
-                                       String mode) {
-        String[] names = stressNames(mode);
+    public static void storeMdsSummary(PathObject annotation, PythonBridge.MdsResult mds) {
         try (MeasurementList measurements = annotation.getMeasurementList()) {
-            measurements.remove(names[0]);
-            measurements.remove(names[1]);
+            measurements.remove(MEASUREMENT_CELLS_MDS2_STRESS);
+            measurements.remove(MEASUREMENT_CELLS_MDS3_STRESS);
             if (mds != null && mds.stress2d() != null) {
-                measurements.put(names[0], mds.stress2d());
+                measurements.put(MEASUREMENT_CELLS_MDS2_STRESS, mds.stress2d());
             }
             if (mds != null && mds.stress3d() != null) {
-                measurements.put(names[1], mds.stress3d());
+                measurements.put(MEASUREMENT_CELLS_MDS3_STRESS, mds.stress3d());
             }
         }
     }
 
     /**
-     * Stores how a per-cell run's clustering was constrained on the annotation: the Delaunay
+     * Stores how a run's clustering was constrained on the annotation: the Delaunay
      * edge and component counts of a spatially constrained run, so they are kept with the
      * project; removes earlier values when the run was not spatial (or clustering is null).
      *
@@ -469,26 +408,6 @@ public final class PHCPipeline {
                 }
             }
         }
-    }
-
-    /**
-     * Gives the annotation measurement names holding a mode's MDS stress.
-     *
-     * @param mode (String) {@link PHCParameters#MODE_WINDOWS} or {@link PHCParameters#MODE_CELLS}.
-     * @return (String[] - size (2)) Names of the 2D and 3D stress measurements.
-     * @throws IllegalArgumentException When mode is not a known mode.
-     */
-    public static String[] stressNames(String mode) {
-        String[] names;
-        if (PHCParameters.MODE_WINDOWS.equals(mode)) {
-            names = new String[] {MEASUREMENT_MDS2_STRESS, MEASUREMENT_MDS3_STRESS};
-        } else if (PHCParameters.MODE_CELLS.equals(mode)) {
-            names = new String[] {MEASUREMENT_CELLS_MDS2_STRESS, MEASUREMENT_CELLS_MDS3_STRESS};
-        } else {
-            throw new IllegalArgumentException("Unknown mode '" + mode + "'; expected one of "
-                    + PHCParameters.MODES + ".");
-        }
-        return names;
     }
 
     /**
@@ -546,8 +465,8 @@ public final class PHCPipeline {
     }
 
     /**
-     * Gives the colour of a cluster on the viridis ramp, the same for tiles, classified cells,
-     * the MDS viewer and Python's plots.
+     * Gives the colour of a cluster on the viridis ramp, the same for classified cells, the MDS
+     * viewer and Python's plots.
      *
      * @param cluster (int) Cluster label, 0-based (0 = lowest mean L2 norm).
      * @param nClusters (int) Number of clusters in the run, at least 1.
@@ -579,19 +498,15 @@ public final class PHCPipeline {
     }
 
     /**
-     * The outcome of one PHC run, for callers that show the MDS embedding as well as the tiles
-     * or cells.
+     * The outcome of one PHC run, for callers that show the MDS embedding as well as the cells.
      *
-     * @param mode (String) {@link PHCParameters#MODE_WINDOWS} or {@link PHCParameters#MODE_CELLS}.
-     * @param tiles (List of PathObject) Heatmap tiles, not yet added to the hierarchy; empty in
-     *        per-cell mode.
      * @param cells (List of CellAssignment) Each exported cell with its result, not yet applied
-     *        (see {@link #applyCellResults}); empty in tiled-window mode.
+     *        (see {@link #applyCellResults}).
      * @param nClusters (int) Number of clusters actually used.
-     * @param nClustered (int) Windows (tiled) or cells (per-cell) that were clustered.
-     * @param nSkipped (int) Cells without a usable centroid (per-cell mode), else 0.
-     * @param clustering (PythonBridge.ClusteringResult) Whether per-cell clustering was fitted
-     *        on a subsample or constrained to the Delaunay graph, or null in tiled-window mode.
+     * @param nClustered (int) Cells that were clustered.
+     * @param nSkipped (int) Cells without a usable centroid.
+     * @param clustering (PythonBridge.ClusteringResult) Whether the clustering was fitted on a
+     *        subsample or constrained to the Delaunay graph.
      * @param mds (PythonBridge.MdsResult) Summary of the MDS embedding, or null when MDS was
      *        switched off or skipped.
      * @param plots (PythonBridge.PlotTarget) Where Python saved its plots and CSV, or null
@@ -599,8 +514,8 @@ public final class PHCPipeline {
      * @param warnings (List of String) Non-fatal problems Python reported, e.g. plots that
      *        could not be written; empty when there were none.
      */
-    public record Result(String mode, List<PathObject> tiles, List<CellAssignment> cells,
-                         int nClusters, int nClustered, int nSkipped,
+    public record Result(List<CellAssignment> cells, int nClusters, int nClustered,
+                         int nSkipped,
                          PythonBridge.ClusteringResult clustering, PythonBridge.MdsResult mds,
                          PythonBridge.PlotTarget plots, List<String> warnings) {
     }
@@ -616,11 +531,12 @@ public final class PHCPipeline {
     }
 
     /**
-     * What {@link #clearCellResults} changed.
+     * What {@link #clearResults} changed.
      *
+     * @param nTiles (int) Heatmap tiles of versions before 0.6.2 that were removed.
      * @param nCleaned (int) Cells that had PHC measurements removed.
      * @param nRestored (int) Cells whose class from before PHC was restored.
      */
-    public record ClearedCells(int nCleaned, int nRestored) {
+    public record ClearedResults(int nTiles, int nCleaned, int nRestored) {
     }
 }

@@ -5,7 +5,7 @@
 # -----
 #   ./build.sh          build the extension jar
 #   ./build.sh test     also compile and run the headless pipeline check (synthetic cells,
-#                       tiled and per-cell windows, plain and Delaunay-constrained clustering)
+#                       per-cell windows, plain and Delaunay-constrained clustering)
 #   ./build.sh guitest  also run the on-screen progress dialog and MDS viewer check (opens windows)
 #
 # Arguments (environment variables)
@@ -20,18 +20,16 @@
 # -------
 #   build/libs/qupath-extension-phc-<VERSION>.jar   drop this onto QuPath to install it
 #   build/test/blank_slide.png                      blank image the synthetic cells sit on
-#   build/test/heatmap_*.png                        rendered heatmaps from the test run
 #   build/test/PHC plots/synthetic_ring_random_*    matplotlib MDS plots and CSV from Python
-#                                                   (*_cells_* for per-cell windows,
-#                                                   *_cells_delaunay.png when spatial)
+#                                                   (*_cells_delaunay.png when spatial)
 #   build/test/progress_dialog.png                  mid-run screenshot from the dialog check
-#   build/test/mds_2d_view.png, mds_3d_view.png     MDS viewer snapshots from the dialog check
-#   build/test/mds_cells_2d_view.png, mds_cells_3d_view.png   same for per-cell windows
+#   build/test/mds_cells_2d_view.png, mds_cells_3d_view.png   MDS viewer snapshots from the
+#                                                   dialog check
 #   exit status 0 on success, non-zero if compilation or the test fails
 
 set -euo pipefail
 
-VERSION="0.6.1"
+VERSION="0.6.2"
 JAVA_RELEASE=25   # QuPath 0.7 runs on Java 25
 JAVA_HOME="${JAVA_HOME:-$HOME/.local/jdk-25.0.4.1+1/Contents/Home}"
 QUPATH_APP="${QUPATH_APP:-/Applications/QuPath-0.7.0-arm64.app}"

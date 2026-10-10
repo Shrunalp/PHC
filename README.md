@@ -107,10 +107,10 @@ library installed above.
 ### 1. Install the extension in QuPath
 
 1. Download the ready-built extension
-   [`qupath-extension-phc-0.6.1.jar`](https://github.com/Shrunalp/PHC/releases/latest/download/qupath-extension-phc-0.6.1.jar)
+   [`qupath-extension-phc-0.6.2.jar`](https://github.com/Shrunalp/PHC/releases/latest/download/qupath-extension-phc-0.6.2.jar)
    from the [latest release](https://github.com/Shrunalp/PHC/releases/latest). The same file is
    also in this repository at
-   [`qupath-extension-phc/dist/`](qupath-extension-phc/dist/qupath-extension-phc-0.6.1.jar).
+   [`qupath-extension-phc/dist/`](qupath-extension-phc/dist/qupath-extension-phc-0.6.2.jar).
    It needs **QuPath 0.7** and works on macOS, Windows and Linux.
 2. Drag the `.jar` file onto the QuPath window and restart QuPath. A **PHC** entry appears
    under **Extensions**.
@@ -151,7 +151,7 @@ cd qupath-extension-phc
 JAVA_HOME=/path/to/jdk-25 QUPATH_APP=/Applications/QuPath-0.7.0-arm64.app ./build.sh
 ```
 
-This writes `qupath-extension-phc/build/libs/qupath-extension-phc-0.6.1.jar`. `QUPATH_APP` is
+This writes `qupath-extension-phc/build/libs/qupath-extension-phc-0.6.2.jar`. `QUPATH_APP` is
 the QuPath installation whose jars are compiled against (on macOS, the `.app` bundle). On macOS,
 `JAVA_HOME=$(/usr/libexec/java_home -v 25)` finds an installed JDK 25. Optionally,
 `PHC_PYTHON=/path/to/python ./build.sh test` also runs the end-to-end check on synthetic cells.

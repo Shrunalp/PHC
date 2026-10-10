@@ -1,18 +1,17 @@
 /*
- * Turns PHC stage and window- or cell-count updates into progress-bar values and ETA messages.
+ * Turns PHC stage and cell-count updates into progress-bar values and ETA messages.
  *
  * Contents
  * --------
  * ProgressTracker : class
- *     Tracks the current PHC stage and estimates the time left from the window (or cell) rate.
+ *     Tracks the current PHC stage and estimates the time left from the cell rate.
  */
 
 package qupath.ext.phc;
 
 /**
- * Keeps track of which PHC stage is running and how fast windows (or, in per-cell mode,
- * cells) are finishing, so the progress dialog can show a fraction and an estimated time to
- * completion. Holds the current
+ * Keeps track of which PHC stage is running and how fast cells' windows are finishing, so the
+ * progress dialog can show a fraction and an estimated time to completion. Holds the current
  * stage and timing as state; times are passed in, which keeps the estimates testable. Methods
  * are synchronized because updates arrive on the worker thread while a clock ticks on another.
  */
@@ -25,13 +24,8 @@ public final class ProgressTracker {
     public static final String PERSISTENCE = "persistence";
     public static final String CLUSTERING = "clustering";
     public static final String MDS = "mds";
-    public static final String TILES = "tiles";
-    /** Per-cell mode's last stage, instead of {@link #TILES}: matching results to the cells. */
+    /** Last stage: matching the results to the cells. */
     public static final String CELLS = "cells";
-
-    /** What the persistence stage counts in each mode. */
-    public static final String WINDOWS_NOUN = "windows";
-    public static final String CELLS_NOUN = "cells";
 
     /** Value of {@link #fraction()} when the stage has no measurable progress. */
     public static final double INDETERMINATE = -1;
@@ -41,9 +35,9 @@ public final class ProgressTracker {
     private static final int SECONDS_PER_MINUTE = 60;
     private static final int SECONDS_PER_HOUR = 3600;
     private static final String SPATIAL_NOTE = " (Delaunay-constrained)";  // clustering label
+    private static final String ITEMS = "cells";  // what the stages count
 
     private final long runStartNanos;
-    private final String noun;
     private final boolean spatial;
     private String stage = EXPORT;
     private long stageStartNanos;
@@ -52,19 +46,15 @@ public final class ProgressTracker {
     private long nowNanos;
 
     /**
-     * Starts tracking a run, recording what its persistence stage counts and whether its
-     * clustering is constrained to the Delaunay graph of the cell centroids, so the stage
-     * messages say so.
+     * Starts tracking a run, recording whether its clustering is constrained to the Delaunay
+     * graph of the cell centroids, so the stage messages say so.
      *
      * @param runStartNanos (long) {@link System#nanoTime()} when the run began.
-     * @param noun (String) {@link #WINDOWS_NOUN} for tiled windows, {@link #CELLS_NOUN} for
-     *        per-cell windows; used in the stage messages.
      * @param spatial (boolean) True for spatially constrained (Delaunay) clustering, e.g.
      *        "Clustering 3200 cells (Delaunay-constrained)".
      */
-    public ProgressTracker(long runStartNanos, String noun, boolean spatial) {
+    public ProgressTracker(long runStartNanos, boolean spatial) {
         this.runStartNanos = runStartNanos;
-        this.noun = noun;
         this.spatial = spatial;
         this.stageStartNanos = runStartNanos;
         this.nowNanos = runStartNanos;
@@ -74,14 +64,14 @@ public final class ProgressTracker {
      * Records a progress event; a new stage name restarts the stage clock used for the ETA.
      *
      * @param newStage (String) One of the stage constants above.
-     * @param newDone (long) Items finished in this stage (windows for persistence).
+     * @param newDone (long) Items finished in this stage (cells for persistence).
      * @param newTotal (long) Items in this stage, 0 or less when unknown.
      * @param now (long) {@link System#nanoTime()} of the event.
      * @return (void)
      * @throws IllegalArgumentException When newStage is not a known stage.
      */
     public synchronized void update(String newStage, long newDone, long newTotal, long now) {
-        stageLabel(newStage, 0, 0, noun, spatial);  // validates the stage name
+        stageLabel(newStage, 0, 0, spatial);  // validates the stage name
         if (!newStage.equals(stage)) {
             stage = newStage;
             stageStartNanos = now;
@@ -93,7 +83,7 @@ public final class ProgressTracker {
 
     /**
      * Advances the clock without new progress, so the elapsed time and the estimate keep
-     * moving while a slow window is being computed.
+     * moving while a slow cell window is being computed.
      *
      * @param now (long) {@link System#nanoTime()} of the tick.
      * @return (void)
@@ -105,7 +95,7 @@ public final class ProgressTracker {
     /**
      * Gives the progress-bar value for the current stage.
      *
-     * @return (double) Fraction in [0, 1] while windows are computed, else
+     * @return (double) Fraction in [0, 1] while cells are computed, else
      *         {@link #INDETERMINATE}.
      */
     public synchronized double fraction() {
@@ -117,8 +107,8 @@ public final class ProgressTracker {
     }
 
     /**
-     * Estimates the seconds left in the persistence stage from the average time per window
-     * so far.
+     * Estimates the seconds left in the persistence stage from the average time per cell so
+     * far.
      *
      * @return (double) Seconds remaining, or -1 when there is not enough data yet.
      */
@@ -135,12 +125,12 @@ public final class ProgressTracker {
     /**
      * Builds the text shown above the progress bar.
      *
-     * @return (String) Stage description, the ETA while windows are computed, and the elapsed
-     *         time, e.g. "Computing persistence: 120 / 256 windows (47%), about 0:42 left
+     * @return (String) Stage description, the ETA while cells are computed, and the elapsed
+     *         time, e.g. "Computing persistence: 120 / 256 cells (47%), about 0:42 left
      *         (elapsed 0:38)".
      */
     public synchronized String message() {
-        String text = stageLabel(stage, done, total, noun, spatial);
+        String text = stageLabel(stage, done, total, spatial);
         if (stage.equals(PERSISTENCE) && total > 0) {
             double remaining = secondsRemaining();
             text += remaining < 0 ? ", estimating time left"
@@ -173,13 +163,12 @@ public final class ProgressTracker {
      * @param name (String) Stage name.
      * @param stageDone (long) Items finished in the stage.
      * @param stageTotal (long) Items in the stage, 0 or less when unknown.
-     * @param items (String) What is counted, "windows" or "cells".
      * @param spatialClustering (boolean) Whether clustering is Delaunay-constrained.
      * @return (String) Human-readable description of the stage.
      * @throws IllegalArgumentException When name is not a known stage.
      */
     private static String stageLabel(String name, long stageDone, long stageTotal,
-                                     String items, boolean spatialClustering) {
+                                     boolean spatialClustering) {
         String label;
         switch (name) {
             case EXPORT -> label = "Exporting detected cells";
@@ -187,19 +176,18 @@ public final class ProgressTracker {
             case CENTROIDS -> label = "Reading cell centroids";
             case PERSISTENCE -> label = stageTotal > 0
                     ? String.format("Computing persistence: %d / %d %s (%d%%)", stageDone,
-                            stageTotal, items, Math.round(100.0 * stageDone / stageTotal))
+                            stageTotal, ITEMS, Math.round(100.0 * stageDone / stageTotal))
                     : "Computing persistence";
             case CLUSTERING -> label = (stageTotal > 0
-                    ? "Clustering " + stageTotal + " " + items : "Clustering " + items)
+                    ? "Clustering " + stageTotal + " " + ITEMS : "Clustering " + ITEMS)
                     + (spatialClustering ? SPATIAL_NOTE : "");
             case MDS -> label = stageTotal > 0
-                    ? "Projecting " + stageTotal + " " + items + " with MDS (2D and 3D)"
-                    : "Projecting " + items + " with MDS (2D and 3D)";
-            case TILES -> label = "Building heatmap tiles";
+                    ? "Projecting " + stageTotal + " " + ITEMS + " with MDS (2D and 3D)"
+                    : "Projecting " + ITEMS + " with MDS (2D and 3D)";
             case CELLS -> label = "Matching results to cells";
             default -> throw new IllegalArgumentException("Unknown PHC stage '" + name
                     + "'; expected export, starting, centroids, persistence, clustering, "
-                    + "mds, tiles or cells.");
+                    + "mds or cells.");
         }
         return label;
     }

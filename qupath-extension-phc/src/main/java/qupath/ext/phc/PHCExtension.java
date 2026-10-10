@@ -24,8 +24,8 @@ import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.prefs.PathPrefs;
 
 /**
- * Registers PHC with QuPath: a menu to run PHC on the selected annotation (tiled or per-cell
- * windows), show its MDS plot and clear its results, plus preferences for the Python
+ * Registers PHC with QuPath: a menu to run PHC on the selected annotation (one window centred
+ * on each cell), show its MDS plot and clear its results, plus preferences for the Python
  * environment that holds the PHC library.
  */
 public class PHCExtension implements QuPathExtension {

@@ -64,18 +64,16 @@ public final class PHCTask extends Task<PHCPipeline.Result> {
     }
 
     /**
-     * Runs the pipeline, forwarding each stage and window (or cell) count to the progress bar
-     * and a once-a-second clock to the ETA message.
+     * Runs the pipeline, forwarding each stage and cell count to the progress bar and a
+     * once-a-second clock to the ETA message.
      *
-     * @return (PHCPipeline.Result) Heatmap tiles or per-cell results, not yet added to the
-     *         hierarchy, with the MDS summary and plot files.
+     * @return (PHCPipeline.Result) Per-cell results, not yet applied to the cells, with the MDS
+     *         summary and plot files.
      * @throws Exception When there are no detected cells, Python fails, or the run is cancelled.
      */
     @Override
     protected PHCPipeline.Result call() throws Exception {
-        ProgressTracker tracker = new ProgressTracker(System.nanoTime(), settings.isCellMode()
-                ? ProgressTracker.CELLS_NOUN : ProgressTracker.WINDOWS_NOUN,
-                settings.isSpatial());
+        ProgressTracker tracker = new ProgressTracker(System.nanoTime(), settings.isSpatial());
         ScheduledExecutorService clock = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "phc-progress-clock");
             thread.setDaemon(true);

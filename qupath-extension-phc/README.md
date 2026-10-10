@@ -12,8 +12,8 @@ clustering can also be **spatially constrained** to the Delaunay triangulation o
 centroids, so each cluster is a contiguous region of tissue (see
 [Spatially constrained clustering](#spatially-constrained-clustering)).
 
-Since 0.6.1 the dialog only offers per-cell windows; the tiled-window mode of earlier versions
-is no longer in the user interface.
+Since 0.6.2 per-cell windows are the only mode: the tiled-window mode of earlier versions has
+been removed (**Clear PHC heatmap** still removes the tiles it left).
 
 The jar is the QuPath front end. The maths runs in your existing Python PHC library, so
 QuPath shows exactly what the PHC library computes.
@@ -23,9 +23,9 @@ QuPath (this jar)                                 Python (PHC library)
 Analyze > Cell detection (run first)
 Extensions > PHC > Run PHC...
   parameter dialog (window size in um, ...)
-  cell centroids in the ROI -> cells.geojson ---> phc_bridge.py --mode cells
-  ROI mask (<= 4096 px a side) -> mask.png          cell centroids (nucleus, else cell)
-                                                    one window centred on each cell
+  cell centroids in the ROI -> cells.geojson ---> phc_bridge.py
+    (nucleus, else cell)
+  ROI mask (<= 4096 px a side) -> mask.png          one window centred on each cell
                                                     alpha persistence per window (parallel)
                                                     L2 measures + agglomerative clustering
                                                       (optionally on the Delaunay graph)
@@ -36,8 +36,8 @@ Extensions > PHC > Run PHC...
 
 ## Install (QuPath 0.7)
 
-1. Download [`qupath-extension-phc-0.6.1.jar`](https://github.com/Shrunalp/PHC/releases/latest/download/qupath-extension-phc-0.6.1.jar)
-   (also in [`dist/`](dist/qupath-extension-phc-0.6.1.jar)), drag it onto the QuPath window
+1. Download [`qupath-extension-phc-0.6.2.jar`](https://github.com/Shrunalp/PHC/releases/latest/download/qupath-extension-phc-0.6.2.jar)
+   (also in [`dist/`](dist/qupath-extension-phc-0.6.2.jar)), drag it onto the QuPath window
    and restart QuPath. To build it yourself instead, see [Build](#build).
 2. In **Edit > Preferences > PHC**, set:
    - **Python executable**: a Python with the packages of the repository's
@@ -113,7 +113,7 @@ clustered when its window has at least *Min cells per window* centroids (itself 
 at least *Min ROI coverage* of it lies inside the annotation; other cells are still computed
 and get coverage and neighbour count only.
 
-No tiles are created: the results go onto the cells as measurements, so
+The results go onto the cells as measurements, so
 **Measure > Show measurement maps > `PHC: cluster`** (or `PHC: L2 norm`) colours the cells.
 
 | Cell measurement | Meaning |
@@ -138,8 +138,7 @@ not classified by the latest run (left out, or classes switched off) get their o
 back. **Clear PHC heatmap** restores every saved class and removes the per-cell measurements.
 
 In the **MDS viewer**, points are coloured by cluster even when the cells keep their own
-classes. On an annotation that still holds MDS results from a tiled run of an earlier version,
-**Show MDS plot** asks which plot to show.
+classes.
 
 Results map back to cells by position: Java exports the annotation's cell centroids (one
 GeoJSON Point per cell, with its UUID) in a fixed order, Python returns one entry per exported
@@ -231,7 +230,8 @@ MDS viewer's plot-folder note name it when it is present.
 
 The filtration is always the alpha complex of the window's cell centroids. A cell's centroid is
 the centroid of its nucleus when it has one (cells from **Cell detection**), otherwise of its
-outline. Any image type works: PHC reads detections, not pixels.
+outline; the same point decides whether the cell is inside the annotation. Any image type
+works: PHC reads detections, not pixels.
 
 ## Limits and caveats
 
@@ -259,13 +259,11 @@ and an installed QuPath 0.7 (its jars are the compile classpath). After a rebuil
 `build/libs/qupath-extension-phc-<VERSION>.jar` into `dist/` so the two stay in step.
 
 ```bash
-./build.sh          # -> build/libs/qupath-extension-phc-0.6.1.jar
+./build.sh          # -> build/libs/qupath-extension-phc-0.6.2.jar
 ./build.sh test     # also runs the headless end-to-end check on synthetic cells (PHCPipelineCheck),
-                    # per-cell (and, through the scripting API, tiled) windows, plain and
-                    # Delaunay-constrained clustering
+                    # per-cell windows, plain and Delaunay-constrained clustering
 ./build.sh guitest  # also opens the progress dialog and MDS viewer; saves build/test/progress_dialog.png,
-                    # build/test/mds_2d_view.png, mds_3d_view.png, mds_cells_2d_view.png and
-                    # mds_cells_3d_view.png
+                    # build/test/mds_cells_2d_view.png and mds_cells_3d_view.png
 ```
 
 `build.sh` documents the `JAVA_HOME`, `QUPATH_APP`, `PHC_PYTHON` and `PHC_LIBRARY` overrides.
@@ -278,6 +276,3 @@ PHC_PYTHON=~/miniconda3/envs/phc/bin/python ./build.sh test
 ```
 
 `PHC_LIBRARY` defaults to the repository root (the folder above this one).
-
-The tiled-window mode is still available to scripts and tests through `PHCParameters`
-(`mode = "windows"`) and `phc_bridge.py --mode windows`; only the dialog no longer offers it.

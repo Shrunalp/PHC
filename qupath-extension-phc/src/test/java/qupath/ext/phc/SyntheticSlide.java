@@ -4,7 +4,7 @@
  * Contents
  * --------
  * SyntheticSlide : class
- *     Creates the test image, an annotation full of ring-arranged and random cells, and helpers.
+ *     Creates the test image and an annotation full of ring-arranged and random cells.
  */
 
 package qupath.ext.phc;
@@ -13,7 +13,6 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -24,7 +23,6 @@ import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.images.servers.ImageServerMetadata;
 import qupath.lib.images.servers.ImageServers;
-import qupath.lib.objects.PathCellObject;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
@@ -64,7 +62,6 @@ final class SyntheticSlide {
     private static final double OUTSIDE_X = 100;
     private static final double OUTSIDE_Y_STEP = 150;
     private static final long SEED = 42;
-    private static final int CELL_DOT_RADIUS = 2;     // rendering only
 
     private SyntheticSlide() {
     }
@@ -150,43 +147,6 @@ final class SyntheticSlide {
     static boolean isRingSide(double x) {
         boolean ringSide = x < ANNOTATION_X + ANNOTATION_WIDTH / 2;
         return ringSide;
-    }
-
-    /**
-     * Gives the point PHC uses for a cell: its nucleus centroid, else its ROI centroid.
-     *
-     * @param cell (PathObject) Cell or other detection.
-     * @return (double[]) Centroid {x, y} in slide pixels.
-     */
-    static double[] centroid(PathObject cell) {
-        ROI roi = cell.getROI();
-        if (cell instanceof PathCellObject cellObject && cellObject.getNucleusROI() != null) {
-            roi = cellObject.getNucleusROI();
-        }
-        double[] point = {roi.getCentroidX(), roi.getCentroidY()};
-        return point;
-    }
-
-    /**
-     * Draws cells as dots on a white canvas the size of the image, for heatmap renders.
-     *
-     * @param cells (List of PathObject) Cells to draw.
-     * @return (BufferedImage) RGB canvas of size (IMAGE_HEIGHT, IMAGE_WIDTH).
-     */
-    static BufferedImage drawCells(List<PathObject> cells) {
-        BufferedImage canvas = new BufferedImage(IMAGE_WIDTH, IMAGE_HEIGHT,
-                BufferedImage.TYPE_INT_RGB);
-        Graphics2D graphics = canvas.createGraphics();
-        graphics.setColor(Color.WHITE);
-        graphics.fillRect(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
-        graphics.setColor(Color.BLACK);
-        for (PathObject cell : cells) {
-            double[] point = centroid(cell);
-            graphics.fillOval((int) point[0] - CELL_DOT_RADIUS, (int) point[1] - CELL_DOT_RADIUS,
-                    2 * CELL_DOT_RADIUS, 2 * CELL_DOT_RADIUS);
-        }
-        graphics.dispose();
-        return canvas;
     }
 
     /**

@@ -7,20 +7,18 @@
  *     Launches the PHC Python process for an annotation's cells and parses its JSON output.
  * PythonBridge.BridgeResult : record
  *     Everything the bridge reports for one run.
- * PythonBridge.WindowResult : record
- *     Position, cell count, L2 measures, cluster label and MDS coordinates of one PHC window.
  * PythonBridge.CellResult : record
  *     Centroid, neighbour count, L2 measures, cluster label and MDS coordinates of one cell's
- *     window (per-cell mode).
+ *     window.
  * PythonBridge.ClusteringResult : record
  *     How per-cell clustering was fitted: on a subsample or not, and whether it was
  *     constrained to the Delaunay graph of the cell centroids.
  * PythonBridge.MdsResult : record
- *     Summary of the MDS embedding of the windows' L2 dissimilarity matrix.
+ *     Summary of the MDS embedding of the cells' L2 dissimilarity matrix.
  * PythonBridge.PlotTarget : record
  *     Folder and file name prefix for the matplotlib MDS plots and CSV Python writes.
  * PythonBridge.ProgressListener : interface
- *     Receives stage and window-count updates while a run is in progress.
+ *     Receives stage and cell-count updates while a run is in progress.
  */
 
 package qupath.ext.phc;
@@ -30,7 +28,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,15 +51,11 @@ import com.google.gson.annotations.SerializedName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import qupath.lib.objects.PathCellObject;
-import qupath.lib.geom.Point2;
 import qupath.lib.objects.PathObject;
-import qupath.lib.roi.PolygonROI;
-import qupath.lib.roi.interfaces.ROI;
 
 /**
- * Hands an annotation's detected cells to the user's Python environment, where the PHC library
- * does the centroid, alpha persistence, L2 and clustering work, and returns the parsed
+ * Hands an annotation's exported cell centroids to the user's Python environment, where the
+ * PHC library does the alpha persistence, L2, clustering and MDS work, and returns the parsed
  * results. Keeping the maths in Python means QuPath shows exactly what the PHC library
  * computes.
  */
@@ -147,19 +140,22 @@ public final class PythonBridge {
     /**
      * Runs alpha PHC on an annotation's cell centroids and waits for the results, optionally
      * asking Python to save its MDS plots and CSV. Call it off the JavaFX thread; large
-     * annotations with small strides can take minutes.
+     * annotations with large windows can take minutes.
      *
-     * @param cells (CellExporter.ExportedCells) Cells, ROI mask and bounding box to analyse.
+     * @param cells (CellExporter.ExportedCells) Cells, centroids, ROI mask and bounding box to
+     *        analyse.
      * @param params (PHCParameters) Validated PHC, clustering and MDS settings.
      * @param pixelSizeMicrons (double) Micrometres per slide pixel, used to convert window size
-     *        and stride to pixels; {@link PHCParameters#UNCALIBRATED_PIXEL_SIZE} for pixels.
-     * @param listener (ProgressListener) Receives stage and window-count updates as they
+     *        and edge length to pixels; {@link PHCParameters#UNCALIBRATED_PIXEL_SIZE} for
+     *        pixels.
+     * @param listener (ProgressListener) Receives stage and cell-count updates as they
      *        arrive, on the calling thread.
      * @param plots (PlotTarget) Existing folder and prefix for the plot files, or null to
      *        write none.
-     * @return (BridgeResult) Per-window positions, L2 measures, cluster labels and MDS
-     *         coordinates.
-     * @throws IOException When Python cannot be started, fails, or writes no results.
+     * @return (BridgeResult) Per-cell neighbour counts, L2 measures, cluster labels and MDS
+     *         coordinates, one entry per exported cell in export order.
+     * @throws IOException When Python cannot be started, fails, writes no results, or returns
+     *         results that do not match the exported cells.
      * @throws InterruptedException When the calling thread is interrupted while waiting.
      * @throws CancellationException When {@link #cancel()} stopped the run.
      */
@@ -174,7 +170,7 @@ public final class PythonBridge {
             Path maskPath = workDir.resolve("mask.png");
             Path outputPath = workDir.resolve("results.json");
             extractBridgeScript(script);
-            writeCells(cellsPath, cells.cells());
+            CellExporter.writeCells(cellsPath, cells);
             ImageIO.write(cells.mask(), "png", maskPath.toFile());
 
             List<String> command = new ArrayList<>(List.of(pythonExecutable, script.toString(),
@@ -207,106 +203,16 @@ public final class PythonBridge {
             try (Reader reader = Files.newBufferedReader(outputPath, StandardCharsets.UTF_8)) {
                 parsed = new Gson().fromJson(reader, BridgeResult.class);
             }
-            String mode = parsed.mode() == null ? PHCParameters.MODE_WINDOWS : parsed.mode();
-            if (!mode.equals(params.mode())) {
-                throw new IOException("PHC Python returned '" + mode + "' results for a '"
-                        + params.mode() + "' run; is phc_bridge.py up to date?");
-            }
             List<CellResult> cellResults = parsed.cells() == null ? List.of() : parsed.cells();
-            if (params.isCellMode()) {
-                checkCellOrder(cellResults, cells.cells());
-            }
-            BridgeResult result = new BridgeResult(mode,
-                    parsed.windows() == null ? List.of() : parsed.windows(), cellResults,
-                    parsed.nClusters(), parsed.nWindowsClustered(), parsed.nCells(),
-                    parsed.nCellsClustered(), parsed.nSkipped(), parsed.clustering(),
-                    parsed.elapsedSeconds(), parsed.mds(),
+            checkCellOrder(cellResults, cells.cells());
+            BridgeResult result = new BridgeResult(cellResults, parsed.nClusters(),
+                    parsed.nCells(), parsed.nCellsClustered(), parsed.nSkipped(),
+                    parsed.clustering(), parsed.elapsedSeconds(), parsed.mds(),
                     List.copyOf(warnings));  // warnings are not in the JSON
             return result;
         } finally {
             deleteRecursively(workDir);
         }
-    }
-
-    /**
-     * Writes the cells Python reads as a GeoJSON FeatureCollection of Point features at each
-     * cell's centroid, in list order, so the bridge's feature index i is cells.get(i). Only the
-     * centroids are written: full cell and nucleus outlines made the file ~10x larger and slow
-     * to write and parse, and Python only uses the centroid. Measurements are never written,
-     * so earlier PHC measurements never reach Python.
-     *
-     * @param path (Path) GeoJSON file to write.
-     * @param cells (List of PathObject) Exported cells, in the order results map back to.
-     * @return (void)
-     * @throws IOException When the file cannot be written.
-     */
-    static void writeCells(Path path, List<PathObject> cells) throws IOException {
-        try (Writer out = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
-            out.write("{\"type\":\"FeatureCollection\",\"features\":[");
-            StringBuilder feature = new StringBuilder();
-            for (int i = 0; i < cells.size(); i++) {
-                PathObject cell = cells.get(i);
-                double[] centroid = centroid(centroidRoi(cell));
-                feature.setLength(0);
-                feature.append(i == 0 ? "" : ",")
-                        .append("{\"type\":\"Feature\",\"id\":\"").append(cell.getID())
-                        .append("\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[")
-                        .append(centroid[0]).append(',').append(centroid[1]).append("]}}");
-                out.append(feature);
-            }
-            out.write("]}");
-        }
-    }
-
-    /**
-     * Picks the ROI whose centroid stands for a cell: the nucleus, which marks where the cell
-     * sits more precisely than its estimated boundary, or the object's own ROI when there is
-     * no nucleus (plain detections, or cells without one).
-     *
-     * @param cell (PathObject) Exported detection or cell.
-     * @return (ROI) Nucleus ROI when present, else the object's ROI.
-     */
-    static ROI centroidRoi(PathObject cell) {
-        ROI nucleus = cell instanceof PathCellObject cellObject ? cellObject.getNucleusROI() : null;
-        ROI centroidRoi = nucleus != null ? nucleus : cell.getROI();
-        return centroidRoi;
-    }
-
-    /**
-     * Gives the area centroid of a ROI in double precision. QuPath's own centroid of a polygon
-     * ROI carries float rounding (~1e-4 px), and its GeoJSON export rounds vertices to two
-     * decimals (~4e-3 px), so polygons use the shoelace formula on the stored vertices; other
-     * ROIs (ellipses, rectangles, points) have an exact centroid already.
-     *
-     * @param roi (ROI) Nucleus or cell ROI.
-     * @return (double[]) Centroid (x, y) in slide pixels.
-     */
-    static double[] centroid(ROI roi) {
-        double[] centroid = {roi.getCentroidX(), roi.getCentroidY()};
-        if (roi instanceof PolygonROI) {
-            List<Point2> vertices = roi.getAllPoints();
-            Point2 origin = vertices.get(0);  // shift to keep slide-scale coordinates precise
-            double area2 = 0;
-            double sumX = 0;
-            double sumY = 0;
-            for (int i = 0; i < vertices.size(); i++) {
-                Point2 p = vertices.get(i);
-                Point2 q = vertices.get((i + 1) % vertices.size());
-                double px = p.getX() - origin.getX();
-                double py = p.getY() - origin.getY();
-                double qx = q.getX() - origin.getX();
-                double qy = q.getY() - origin.getY();
-                double cross = px * qy - qx * py;
-                area2 += cross;
-                sumX += (px + qx) * cross;
-                sumY += (py + qy) * cross;
-            }
-            if (area2 != 0) {  // degenerate polygons keep QuPath's centroid
-                centroid[0] = origin.getX() + sumX / (3 * area2);
-                centroid[1] = origin.getY() + sumY / (3 * area2);
-            }
-        }
-        return centroid;
     }
 
     /**
@@ -461,7 +367,7 @@ public final class PythonBridge {
          * Reports the current stage and how far it has got.
          *
          * @param stage (String) One of the stage names in {@link ProgressTracker}.
-         * @param done (long) Items finished in this stage (windows for persistence).
+         * @param done (long) Items finished in this stage (cells for persistence).
          * @param total (long) Items in this stage, 0 when unknown.
          * @return (void)
          */
@@ -469,34 +375,24 @@ public final class PythonBridge {
     }
 
     /**
-     * Everything phc_bridge.py reports for one run, in either mode.
+     * Everything phc_bridge.py reports for one run.
      *
-     * @param mode (String) {@link PHCParameters#MODE_WINDOWS} or {@link PHCParameters#MODE_CELLS}.
-     * @param windows (List of WindowResult) One entry per PHC window, rows outer, columns
-     *        inner; empty in per-cell mode.
-     * @param cells (List of CellResult) One entry per exported cell, in export order; empty in
-     *        tiled-window mode.
+     * @param cells (List of CellResult) One entry per exported cell, in export order.
      * @param nClusters (int) Number of clusters actually used (at most the number requested).
-     * @param nWindowsClustered (int) Windows that passed the coverage and min-cells filters and
-     *        were clustered (tiled-window mode).
      * @param nCells (int) Cell centroids read from the exported cells.
-     * @param nCellsClustered (int) Cells whose window passed the filters and were clustered
-     *        (per-cell mode).
-     * @param nSkipped (int) Exported cells without a usable centroid (per-cell mode).
-     * @param clustering (ClusteringResult) How per-cell clustering was fitted, or null in
-     *        tiled-window mode.
+     * @param nCellsClustered (int) Cells whose window passed the coverage and min-cells
+     *        filters and were clustered.
+     * @param nSkipped (int) Exported cells without a usable centroid.
+     * @param clustering (ClusteringResult) How the clustering was fitted.
      * @param elapsedSeconds (double) Python-side run time, in seconds.
      * @param mds (MdsResult) Summary of the MDS embedding, or null when MDS was switched off
-     *        or skipped (fewer than 2 clustered windows).
+     *        or skipped (fewer than 2 clustered cells).
      * @param warnings (List of String) Non-fatal problems Python reported on "Warning: " lines
      *        (e.g. plots not written); filled in by {@link PythonBridge}, not read from JSON.
      */
     public record BridgeResult(
-            String mode,
-            List<WindowResult> windows,
             List<CellResult> cells,
             @SerializedName("n_clusters") int nClusters,
-            @SerializedName("n_windows_clustered") int nWindowsClustered,
             @SerializedName("n_cells") int nCells,
             @SerializedName("n_cells_clustered") int nCellsClustered,
             @SerializedName("n_skipped") int nSkipped,
@@ -507,10 +403,10 @@ public final class PythonBridge {
     }
 
     /**
-     * Summary of the metric MDS embedding of the clustered windows' L2 dissimilarity matrix.
+     * Summary of the metric MDS embedding of the clustered cells' L2 dissimilarity matrix.
      *
-     * @param nEmbedded (int) Windows that received MDS coordinates.
-     * @param subsampled (boolean) True when more windows were clustered than the MDS limit,
+     * @param nEmbedded (int) Cells that received MDS coordinates.
+     * @param subsampled (boolean) True when more cells were clustered than the MDS limit,
      *        so only a random subsample was embedded.
      * @param stress2d (Double) Kruskal stress-1 of the 2D embedding (0 = perfect), or null.
      * @param stress3d (Double) Kruskal stress-1 of the 3D embedding, or null.
@@ -530,18 +426,18 @@ public final class PythonBridge {
      */
     public record PlotTarget(Path dir, String prefix) {
 
-        /** Suffixes Python appends to the prefix, per the bridge contract. */
+        /** Suffix Python appends to the prefix before every file name below. */
+        public static final String CELLS_SUFFIX = "_cells";
+        /** Suffixes after {@link #CELLS_SUFFIX}, per the bridge contract. */
         public static final String MDS_2D_SUFFIX = "_mds_2d.png";
         public static final String MDS_3D_SUFFIX = "_mds_3d.png";
         public static final String CSV_SUFFIX = "_mds.csv";
-        /** Extra suffix before the above in per-cell mode, e.g. "_cells_mds_2d.png". */
-        public static final String CELLS_SUFFIX = "_cells";
-        /** Optional per-cell plot of the Delaunay adjacency, e.g. "_cells_delaunay.png". */
+        /** Optional plot of the Delaunay adjacency, e.g. "_cells_delaunay.png". */
         public static final String DELAUNAY_SUFFIX = "_delaunay.png";
 
         /**
          * Gives where Python puts its optional plot of the Delaunay adjacency of a spatially
-         * constrained per-cell run, so callers can mention it when it exists.
+         * constrained run, so callers can mention it when it exists.
          *
          * @return (Path) "&lt;dir&gt;/&lt;prefix&gt;_cells_delaunay.png" (may not exist).
          */
@@ -551,24 +447,12 @@ public final class PythonBridge {
         }
 
         /**
-         * Lists the files a run with MDS writes here in either mode, so callers can check or
-         * report them.
+         * Lists the files a run with MDS writes here, so callers can check or report them.
          *
-         * @param mode (String) {@link PHCParameters#MODE_WINDOWS} or
-         *        {@link PHCParameters#MODE_CELLS}.
          * @return (List of Path) The 2D plot, the 3D plot and the coordinate CSV.
-         * @throws IllegalArgumentException When mode is not a known mode.
          */
-        public List<Path> files(String mode) {
-            String base;
-            if (PHCParameters.MODE_WINDOWS.equals(mode)) {
-                base = prefix;
-            } else if (PHCParameters.MODE_CELLS.equals(mode)) {
-                base = prefix + CELLS_SUFFIX;
-            } else {
-                throw new IllegalArgumentException("Unknown mode '" + mode + "'; expected one of "
-                        + PHCParameters.MODES + ".");
-            }
+        public List<Path> files() {
+            String base = prefix + CELLS_SUFFIX;
             List<Path> files = List.of(dir.resolve(base + MDS_2D_SUFFIX),
                     dir.resolve(base + MDS_3D_SUFFIX), dir.resolve(base + CSV_SUFFIX));
             return files;
@@ -576,40 +460,8 @@ public final class PythonBridge {
     }
 
     /**
-     * Position, cell count, L2 measures, cluster label and MDS coordinates of one PHC window,
-     * in full-resolution slide pixels relative to the annotation's bounding box origin.
-     *
-     * @param row (double) Top edge of the window.
-     * @param col (double) Left edge of the window.
-     * @param height (double) Window height, smaller than the window size at the bottom edge.
-     * @param width (double) Window width, smaller than the window size at the right edge.
-     * @param coverage (double) Fraction of the window inside the ROI.
-     * @param nCells (int) Cell centroids inside the window.
-     * @param l2Norm (double) L2 norm of the window's persistence vector.
-     * @param l2ToMean (double) L2 distance from the window's vector to the ROI's mean vector.
-     * @param cluster (int) Agglomerative cluster, 0 = lowest mean L2 norm; -1 = left out (too
-     *        little ROI coverage or too few cells).
-     * @param mds2 (double[] - size (2)) 2D MDS coordinates, or null when the window was not
-     *        embedded (left out, not in the subsample, or MDS off).
-     * @param mds3 (double[] - size (3)) 3D MDS coordinates, or null as for mds2.
-     */
-    public record WindowResult(
-            double row,
-            double col,
-            double height,
-            double width,
-            double coverage,
-            @SerializedName("n_cells") int nCells,
-            @SerializedName("l2_norm") double l2Norm,
-            @SerializedName("l2_to_mean") double l2ToMean,
-            int cluster,
-            double[] mds2,
-            double[] mds3) {
-    }
-
-    /**
-     * Local persistence results of one cell's window in per-cell mode: the square of side
-     * window size centred on the cell's centroid.
+     * Local persistence results of one cell's window: the square of side window size centred
+     * on the cell's centroid.
      *
      * @param index (int) GeoJSON feature index, i.e. position in the exported cell list.
      * @param id (String) The feature's "id" (the cell's UUID), or null when absent.
@@ -641,13 +493,13 @@ public final class PythonBridge {
     }
 
     /**
-     * How the per-cell clustering was fitted: on every clustered cell, or on a random
-     * subsample with the rest assigned to the nearest cluster mean; and whether it was
-     * constrained to the Delaunay graph of the clustered cells' centroids (spatial mode, which
-     * never subsamples).
+     * How the clustering was fitted: on every clustered cell, or on a random subsample with
+     * the rest assigned to the nearest cluster mean; and whether it was constrained to the
+     * Delaunay graph of the clustered cells' centroids (spatial clustering, which never
+     * subsamples).
      *
      * @param subsampled (boolean) True when more cells were clustered than the cap (10,000);
-     *        always false in spatial mode.
+     *        always false for spatial clustering.
      * @param nFitted (int) Cells agglomerative clustering was fitted on.
      * @param spatial (boolean) True when the clustering used the Delaunay adjacency as its
      *        connectivity, so clusters are spatially contiguous.

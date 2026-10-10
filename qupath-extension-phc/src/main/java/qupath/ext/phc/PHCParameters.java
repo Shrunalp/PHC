@@ -4,8 +4,8 @@
  * Contents
  * --------
  * PHCParameters : record
- *     Validated alpha PHC, clustering (optionally Delaunay-constrained), MDS and mode
- *     settings, convertible to bridge arguments.
+ *     Validated alpha PHC, clustering (optionally Delaunay-constrained) and MDS settings,
+ *     convertible to bridge arguments.
  */
 
 package qupath.ext.phc;
@@ -18,45 +18,38 @@ import qupath.lib.plugins.parameters.ParameterList;
 
 /**
  * Holds every setting the PHC bridge needs, so one validated object travels from the dialog to
- * the Python process. PHC is computed on the alpha complex of the cell centroids in each
- * window: one window centred on each cell (the only mode the dialog offers), or tiled windows
- * over the annotation (scripts only). Build it with {@link #fromParameterList(ParameterList)}
- * after showing {@link #createParameterList()} to the user.
+ * the Python process. PHC is computed on the alpha complex of the cell centroids in one
+ * window centred on each cell. Build it with {@link #fromParameterList(ParameterList)} after
+ * showing {@link #createParameterList()} to the user.
  *
  * @param dimension (int) Persistent homology dimension, 0 or 1 (the alpha complex of points in
  *        the plane has no higher homology).
- * @param windowSize (double) Side length of each square window, in micrometres; in pixels
- *        when the image has no pixel size. In per-cell mode, the side of the square centred
- *        on each cell.
- * @param stride (double) Step between windows, in the same unit as windowSize; ignored in
- *        per-cell mode.
+ * @param windowSize (double) Side length of the square window centred on each cell, in
+ *        micrometres; in pixels when the image has no pixel size.
  * @param vectorization (String) One of {@link #VECTORIZATIONS}.
  * @param vectorResolution (int) Side length of each persistence image, or silhouette length.
- * @param minCells (int) Windows with fewer cell centroids than this are not clustered (in
- *        per-cell mode the count includes the centre cell).
+ * @param minCells (int) Cells whose window holds fewer cell centroids than this (the centre
+ *        cell included) are not clustered.
  * @param nClusters (int) Number of agglomerative clusters.
  * @param linkage (String) One of {@link #LINKAGES}.
- * @param minCoverage (double) Fraction of a window that must lie inside the ROI to be kept.
+ * @param minCoverage (double) Fraction of a cell's window that must lie inside the ROI for
+ *        the cell to be clustered.
  * @param nJobs (int) Worker processes for the persistence stage, -1 = all cores.
- * @param computeMds (boolean) Whether to project the windows' L2 dissimilarity matrix into 2D
+ * @param computeMds (boolean) Whether to project the cells' L2 dissimilarity matrix into 2D
  *        and 3D with metric MDS, default true.
- * @param mdsMaxWindows (int) Most windows embedded by MDS, at least 2, default 3000; larger
- *        runs embed a random subsample of this many clustered windows (cells in per-cell mode).
- * @param mode (String) One of {@link #MODES}: {@link #MODE_WINDOWS} (tiles over the
- *        annotation, the default) or {@link #MODE_CELLS} (one window centred on each cell).
- * @param classifyCells (boolean) Per-cell mode only: set each clustered cell's class to its
- *        "PHC cluster k" class, remembering the original so Clear can restore it; default
- *        false.
- * @param spatialClustering (boolean) Per-cell mode only: constrain the agglomerative
- *        clustering to the Delaunay triangulation of the clustered cells' centroids, so each
- *        cluster is a spatially contiguous region; default false. Rejected for tiled windows.
+ * @param mdsMaxWindows (int) Most cells embedded by MDS, at least 2, default 3000; larger
+ *        runs embed a random subsample of this many clustered cells.
+ * @param classifyCells (boolean) Set each clustered cell's class to its "PHC cluster k"
+ *        class, remembering the original so Clear can restore it; default false.
+ * @param spatialClustering (boolean) Constrain the agglomerative clustering to the Delaunay
+ *        triangulation of the clustered cells' centroids, so each cluster is a spatially
+ *        contiguous region; default false.
  * @param maxEdgeLength (double) Delaunay edges longer than this are dropped from the
  *        adjacency, in the same unit as windowSize; default 0 = no limit. Must be >= 0.
  */
 public record PHCParameters(
         int dimension,
         double windowSize,
-        double stride,
         String vectorization,
         int vectorResolution,
         int minCells,
@@ -66,25 +59,12 @@ public record PHCParameters(
         int nJobs,
         boolean computeMds,
         int mdsMaxWindows,
-        String mode,
         boolean classifyCells,
         boolean spatialClustering,
         double maxEdgeLength) {
 
     /** Vectorizations understood by PHC: persistence image or persistence silhouette. */
     public static final List<String> VECTORIZATIONS = List.of("PI", "PL");
-
-    /** Bridge value of the tiled-window mode: square windows tiling the annotation. */
-    public static final String MODE_WINDOWS = "windows";
-
-    /** Bridge value of the per-cell mode: one square window centred on each cell. */
-    public static final String MODE_CELLS = "cells";
-
-    /** Modes understood by phc_bridge.py --mode, in the order of {@link #MODE_LABELS}. */
-    public static final List<String> MODES = List.of(MODE_WINDOWS, MODE_CELLS);
-
-    /** Dialog labels of {@link #MODES}, same order. */
-    public static final List<String> MODE_LABELS = List.of("Tiled windows", "Per-cell windows");
 
     /** Default for {@link #classifyCells()}: cell classes are left alone. */
     public static final boolean DEFAULT_CLASSIFY_CELLS = false;
@@ -120,24 +100,13 @@ public record PHCParameters(
     private static final int MIN_MDS_WINDOWS = 2;      // MDS of one point is meaningless
 
     /**
-     * Tells whether these settings run one window centred on each cell, so callers can put
-     * results on the cells instead of building tiles.
-     *
-     * @return (boolean) True for {@link #MODE_CELLS}, false for {@link #MODE_WINDOWS}.
-     */
-    public boolean isCellMode() {
-        boolean cellMode = MODE_CELLS.equals(mode);
-        return cellMode;
-    }
-
-    /**
      * Tells whether the clustering of this run is constrained to the Delaunay graph of the
      * cell centroids, so callers can label progress and results accordingly.
      *
-     * @return (boolean) True for per-cell settings with {@link #spatialClustering()} on.
+     * @return (boolean) True when {@link #spatialClustering()} is on.
      */
     public boolean isSpatial() {
-        boolean spatial = spatialClustering && isCellMode();
+        boolean spatial = spatialClustering;
         return spatial;
     }
 
@@ -222,7 +191,6 @@ public record PHCParameters(
         PHCParameters settings = new PHCParameters(
                 params.getIntParameterValue("dimension"),
                 params.getDoubleParameterValue("windowSize"),
-                params.getDoubleParameterValue("windowSize"),  // stride is unused per cell
                 (String) params.getChoiceParameterValue("vectorization"),
                 params.getIntParameterValue("vectorResolution"),
                 params.getIntParameterValue("minCells"),
@@ -232,29 +200,11 @@ public record PHCParameters(
                 params.getIntParameterValue("nJobs"),
                 params.getBooleanParameterValue("computeMds"),
                 params.getIntParameterValue("mdsMaxWindows"),
-                MODE_CELLS,  // the dialog only offers per-cell windows
                 params.getBooleanParameterValue("classifyCells"),
                 params.getBooleanParameterValue("spatialClustering"),
                 params.getDoubleParameterValue("maxEdgeLength"));
         settings.validate();
         return settings;
-    }
-
-    /**
-     * Maps a dialog label onto the bridge's mode value.
-     *
-     * @param label (String) One of {@link #MODE_LABELS}.
-     * @return (String) The matching entry of {@link #MODES}.
-     * @throws IllegalArgumentException When label is not a known mode label.
-     */
-    static String modeForLabel(String label) {
-        int index = MODE_LABELS.indexOf(label);
-        if (index < 0) {
-            throw new IllegalArgumentException("Unknown windows mode '" + label
-                    + "'; expected one of " + MODE_LABELS + ".");
-        }
-        String bridgeMode = MODES.get(index);
-        return bridgeMode;
     }
 
     /**
@@ -283,13 +233,12 @@ public record PHCParameters(
     public void validate() {
         requireOption("vectorization", vectorization, VECTORIZATIONS);
         requireOption("linkage", linkage, LINKAGES);
-        requireOption("mode", mode, MODES);
         if (dimension < 0 || dimension > MAX_ALPHA_DIMENSION) {
             throw new IllegalArgumentException("Homology dimension must be 0 or 1 for the alpha "
                     + "complex of cell centroids, got " + dimension);
         }
-        if (!(windowSize > 0) || !(stride > 0)) {
-            throw new IllegalArgumentException("Window size and stride must be greater than 0.");
+        if (!(windowSize > 0)) {
+            throw new IllegalArgumentException("Window size must be greater than 0.");
         }
         if (vectorResolution < 1 || minCells < 0 || nClusters < 1 || nJobs == 0) {
             throw new IllegalArgumentException("Vector resolution and clusters must be >= 1; "
@@ -307,18 +256,12 @@ public record PHCParameters(
             throw new IllegalArgumentException("Max Delaunay edge length must be >= 0 (0 = no "
                     + "limit), got " + maxEdgeLength);
         }
-        if (spatialClustering && !isCellMode()) {
-            throw new IllegalArgumentException("Spatially constrained clustering needs "
-                    + "Windows: " + MODE_LABELS.get(1) + ". Switch it off for "
-                    + MODE_LABELS.get(0).toLowerCase() + ".");
-        }
     }
 
     /**
-     * Converts the settings into phc_bridge.py command line flags, with window size, stride and
-     * max edge length converted to full-resolution slide pixels. --mode, --spatial and
-     * --max-edge-length are always passed (--spatial is 1 only in per-cell mode, so tiled runs
-     * are never constrained); classifyCells stays on the Java side.
+     * Converts the settings into phc_bridge.py command line flags, with window size and max
+     * edge length converted to full-resolution slide pixels. --spatial and --max-edge-length
+     * are always passed; classifyCells stays on the Java side.
      *
      * @param pixelSizeMicrons (double) Micrometres per slide pixel, from
      *        {@link #pixelSizeMicrons(PixelCalibration)}.
@@ -327,7 +270,6 @@ public record PHCParameters(
     public List<String> toBridgeArgs(double pixelSizeMicrons) {
         List<String> args = List.of(
                 "--window-size", Double.toString(windowSize / pixelSizeMicrons),
-                "--stride", Double.toString(stride / pixelSizeMicrons),
                 "--dimension", Integer.toString(dimension),
                 "--vectorization", vectorization,
                 "--vector-resolution", Integer.toString(vectorResolution),
@@ -338,7 +280,6 @@ public record PHCParameters(
                 "--n-jobs", Integer.toString(nJobs),
                 "--mds", computeMds ? "1" : "0",
                 "--mds-max-windows", Integer.toString(mdsMaxWindows),
-                "--mode", mode,
                 "--spatial", isSpatial() ? "1" : "0",
                 "--max-edge-length", Double.toString(maxEdgeLength / pixelSizeMicrons));
         return args;

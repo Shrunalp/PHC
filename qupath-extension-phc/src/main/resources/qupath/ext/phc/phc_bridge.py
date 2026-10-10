@@ -1,10 +1,8 @@
 """
-Runs PHC on the cells detected inside a QuPath annotation: alpha complex persistence of the
-cell centroids, so regions are compared by how their cells are arranged. --mode windows
-(default) tiles the annotation with sliding windows; --mode cells centres one window on
-every cell and computes its local persistence. Writes per-window or per-cell results (L2
-measures, agglomerative cluster labels and 2D / 3D metric MDS coordinates of the L2
-dissimilarity matrix) for QuPath to draw.
+Runs PHC on the cells detected inside a QuPath annotation: one window centred on every cell
+and the alpha complex persistence of the cell centroids in it, so cells are compared by how
+their neighbours are arranged. Writes per-cell results (L2 measures, agglomerative cluster
+labels and 2D / 3D metric MDS coordinates of the L2 dissimilarity matrix) for QuPath to draw.
 
 Inputs
 ------
@@ -19,16 +17,15 @@ Inputs
     x in [X + j*D, X + (j+1)*D) and y in [Y + i*D, Y + (i+1)*D), with D = --mask-downsample.
 
 --origin-x, --origin-y, --width, --height : float
-    Annotation bounding box (X, Y, W, H) in slide pixels; windows tile it from (X, Y).
+    Annotation bounding box (X, Y, W, H) in slide pixels, the frame of the mask.
 
---mode : str
-    "windows" (tiled windows, default) or "cells" (one --window-size window centred on each
-    cell; --stride is ignored).
+--window-size : float
+    Side of the square window centred on each cell, in slide pixels.
 
 --spatial : int
-    1 to cluster cells (--mode cells only) with merges restricted to neighbours in the
-    Delaunay triangulation of the clustered cells' centroids, so clusters are contiguous
-    regions; all clustered cells are fitted (no subsample, --max-clustered does not apply).
+    1 to cluster cells with merges restricted to neighbours in the Delaunay triangulation
+    of the clustered cells' centroids, so clusters are contiguous regions; all clustered
+    cells are fitted (no subsample, --max-clustered does not apply).
     0 (default) keeps the unconstrained clustering.
 
 --max-edge-length : float
@@ -39,23 +36,12 @@ Outputs
 -------
 stdout : text
     Progress for QuPath, one line each: "PHC_STAGE <name> [<count>]" when a stage starts
-    (centroids, persistence <n_windows or n_cells>, clustering <n_clustered>,
-    mds <n_embedded>) and "PHC_PROGRESS <done> <total>" as windows or cells finish;
-    "Warning: ..." lines when the optional plots cannot be written.
+    (centroids, persistence <n_cells>, clustering <n_clustered>, mds <n_embedded>) and
+    "PHC_PROGRESS <done> <total>" as cells finish; "Warning: ..." lines when the optional
+    plots cannot be written.
 
---output : JSON (--mode windows)
-    Keys "mode" ("windows"), "windows" (list of dicts with keys "row", "col", "height",
-    "width" in slide pixels relative to (X, Y), "coverage", "n_cells", "l2_norm",
-    "l2_to_mean", "cluster"),
-    "n_clusters", "n_windows_clustered", "n_cells" and "elapsed_s". "cluster" is -1 for
-    windows with coverage below --min-coverage or fewer than --min-cells cells. With --mds 1
-    each window also has "mds2" ([x, y]) and "mds3" ([x, y, z]), null for windows that were
-    not embedded (excluded, or outside the --mds-max-windows subsample), and the top level
-    has "mds" (dict with keys "n_embedded", "subsampled", "stress_2d", "stress_3d", the
-    stresses being Kruskal stress-1), or null when MDS is off or fewer than 2 windows remain.
-
---output : JSON (--mode cells)
-    Keys "mode" ("cells"), "cells" (one dict per GeoJSON feature, by feature index, with keys
+--output : JSON
+    Keys "cells" (one dict per GeoJSON feature, by feature index, with keys
     "index", "id", "x", "y" (centroid in slide pixels, null when the feature has none),
     "coverage", "n_cells" (neighbours in the cell's window, itself included), "l2_norm",
     "l2_to_mean", "cluster", "mds2", "mds3"), "n_clusters", "n_cells" (features with a
@@ -63,30 +49,32 @@ stdout : text
     (dict with keys "subsampled", "n_fitted", "spatial", "n_edges" (undirected adjacency
     edges used), "n_components" (graph components before bridging), "max_edge_length" and
     "backend" ("numba" or "sklearn": who built the constrained merge tree, "none" for one
-    cluster), the last four null unless --spatial 1), "mds" (as above) and "elapsed_s". Without
-    --spatial, above --max-clustered cells clustering is fitted on a seeded subsample and the
-    other cells join the nearest cluster mean.
+    cluster), the last four null unless --spatial 1), "mds" and "elapsed_s". "cluster" is -1
+    for cells whose window has coverage below --min-coverage or fewer than --min-cells
+    cells; "mds2" ([x, y]) and "mds3" ([x, y, z]) are null for cells that were not embedded
+    (excluded, outside the --mds-max-windows subsample, or --mds 0). "mds" is a dict with
+    keys "n_embedded", "subsampled", "stress_2d", "stress_3d" (Kruskal stress-1), or null
+    when MDS is off or fewer than 2 cells are clustered. Without --spatial, above
+    --max-clustered cells clustering is fitted on a seeded subsample and the other cells
+    join the nearest cluster mean.
 
---plot-dir/<prefix>_mds_2d.png, <prefix>_mds_3d.png : PNG, 150 dpi
+--plot-dir/<prefix>_cells_mds_2d.png, <prefix>_cells_mds_3d.png : PNG, 150 dpi
     Optional MDS scatter plots coloured by cluster (needs matplotlib), with
-    <prefix> = --plot-prefix; "_cells_mds_2d.png" and "_cells_mds_3d.png" in cells mode.
+    <prefix> = --plot-prefix.
 
---plot-dir/<prefix>_mds.csv : CSV
-    Optional, one row per embedded window with columns window_index (index into "windows"),
-    row, col, cluster, mds2_x, mds2_y, mds3_x, mds3_y, mds3_z. In cells mode
-    "<prefix>_cells_mds.csv" with columns cell_index, id, x, y, cluster, mds2_x, mds2_y,
-    mds3_x, mds3_y, mds3_z (embedded cells only).
+--plot-dir/<prefix>_cells_mds.csv : CSV
+    Optional, one row per embedded cell with columns cell_index, id, x, y, cluster, mds2_x,
+    mds2_y, mds3_x, mds3_y, mds3_z.
 
 --plot-dir/<prefix>_cells_delaunay.png : PNG, 150 dpi
-    Optional, with --mode cells --spatial 1: clustered cell centroids coloured by cluster over
-    the adjacency edges used (image coordinates, y down; needs matplotlib).
+    Optional, with --spatial 1: clustered cell centroids coloured by cluster over the
+    adjacency edges used (image coordinates, y down; needs matplotlib).
 """
 
 import argparse
 import csv
 import importlib.util
 import json
-import math
 import os
 import sys
 import time
@@ -139,17 +127,15 @@ from PHC import (PHC, agglomerative_clusters_capped, l2_dissimilarity,  # noqa: 
 
 VECTORIZATIONS = ("PI", "PL")
 LINKAGES = ("ward", "average", "complete", "single")
-MODES = ("windows", "cells")
 MAX_CLUSTERED_WINDOWS = 10000   # agglomerative clustering needs O(n^2) memory
-EXCLUDED = -1                   # cluster label for windows that fail the filters
+EXCLUDED = -1                   # cluster label for cells that fail the filters
 PROGRESS_INTERVAL_S = 0.1       # most frequent progress update sent to QuPath
-MIN_MDS_WINDOWS = 2             # MDS needs at least one pair of windows
+MIN_MDS_WINDOWS = 2             # MDS needs at least one pair of cells
 MDS_SEED = 0                    # seed of the subsample and of sklearn's MDS
 MDS_COMPONENTS = (2, 3)         # embedding dimensions, fitted side by side
-CLUSTER_SEED = 0                # seed of the clustering subsample (cells mode, large n)
+CLUSTER_SEED = 0                # seed of the clustering subsample (large n)
 PLOT_DPI = 150
 MDS_COLUMNS = ("mds2_x", "mds2_y", "mds3_x", "mds3_y", "mds3_z")
-CSV_COLUMNS = ("window_index", "row", "col", "cluster") + MDS_COLUMNS
 CELL_CSV_COLUMNS = ("cell_index", "id", "x", "y", "cluster") + MDS_COLUMNS
 CELL_PLOT_TITLE = "MDS of PHC cell L2 distances"
 
@@ -176,7 +162,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=float, required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--window-size", type=float, default=256.0)
-    parser.add_argument("--stride", type=float, default=256.0)
     parser.add_argument("--dimension", type=int, default=1)
     parser.add_argument("--vectorization", choices=VECTORIZATIONS, default="PI")
     parser.add_argument("--vector-resolution", type=int, default=20)
@@ -189,14 +174,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mds-max-windows", type=int, default=5000)
     parser.add_argument("--plot-dir", default=None)
     parser.add_argument("--plot-prefix", default="phc")
-    parser.add_argument("--mode", choices=MODES, default="windows")
     parser.add_argument("--max-clustered", type=int, default=MAX_CLUSTERED_WINDOWS)
     parser.add_argument("--spatial", type=int, choices=(0, 1), default=0)
     parser.add_argument("--max-edge-length", type=float, default=0.0)
     args = parser.parse_args()
-    if args.mask_downsample < 1 or args.window_size <= 0 or args.stride <= 0:
-        sys.exit("--mask-downsample must be at least 1, and --window-size and --stride "
-                 "must be positive.")
+    if args.mask_downsample < 1 or args.window_size <= 0:
+        sys.exit("--mask-downsample must be at least 1, and --window-size must be positive.")
     if args.mds_max_windows < 1:
         sys.exit(f"--mds-max-windows must be at least 1, got {args.mds_max_windows}.")
     if args.max_clustered < 1:
@@ -236,75 +219,6 @@ def read_mask(path: str) -> np.ndarray:
     return mask
 
 
-def window_coverage(
-        mask: np.ndarray,
-        grid: list[tuple[float, float, float, float]],
-        downsample: float
-        ) -> np.ndarray:
-
-    """
-    Estimates how much of each window lies inside the annotation, so windows that mostly
-    show background can be left out of the clustering.
-
-    Parameters
-    ----------
-    mask : np.ndarray of bool - size (h, w)
-        Annotation mask; pixel (i, j) covers the slide pixels [j*D, (j+1)*D) x [i*D, (i+1)*D)
-        relative to the box origin, with D = downsample.
-
-    grid : list of tuple[float, float, float, float] - length n
-        (row, col, window_height, window_width) per window, in slide pixels relative to the
-        box origin.
-
-    downsample : float
-        Slide pixels per mask pixel (D >= 1).
-
-    Returns
-    -------
-    coverage : np.ndarray of float - size (n,)
-        Mean of the mask over the mask pixels each window touches, in [0, 1]; windows
-        smaller than a mask pixel use the one pixel they fall in, and windows beyond the
-        mask get 0.
-    """
-
-    n_rows, n_cols = mask.shape
-
-    def mask_span(start: float, length: float, limit: int) -> tuple[int, int]:
-
-        """
-        Converts a window's extent along one axis to the range of mask pixels it touches.
-
-        Parameters
-        ----------
-        start : float
-            Window start in slide pixels, relative to the box origin.
-
-        length : float
-            Window length in slide pixels.
-
-        limit : int
-            Number of mask pixels along this axis.
-
-        Returns
-        -------
-        span : tuple[int, int]
-            (first, stop) mask indices, clipped to [0, limit]; first == stop when empty.
-        """
-
-        first = max(0, math.floor(start / downsample))
-        stop = max(first + 1, math.ceil((start + length) / downsample))  # at least one pixel
-        span = (min(first, limit), min(stop, limit))
-        return span
-
-    coverage = np.zeros(len(grid))
-    for k, (row, col, window_height, window_width) in enumerate(grid):
-        top, bottom = mask_span(row, window_height, n_rows)
-        left, right = mask_span(col, window_width, n_cols)
-        if bottom > top and right > left:
-            coverage[k] = mask[top:bottom, left:right].mean()
-    return coverage
-
-
 def cell_coverage(
         mask: np.ndarray,
         corners: np.ndarray,
@@ -314,9 +228,9 @@ def cell_coverage(
 
     """
     Estimates how much of each cell-centred window lies inside the annotation, so cells near
-    its border can be left out of the clustering. Unlike tiles, these windows can reach past
-    the box; the part outside the mask counts as outside the annotation. Vectorized with a
-    summed-area table, so it is fast for many cells.
+    its border can be left out of the clustering. Windows can reach past the box; the part
+    outside the mask counts as outside the annotation. Vectorized with a summed-area table,
+    so it is fast for many cells.
 
     Parameters
     ----------
@@ -344,7 +258,7 @@ def cell_coverage(
     summed = np.zeros((n_rows + 1, n_cols + 1), dtype=np.int64)
     summed[1:, 1:] = mask.astype(np.int64).cumsum(axis=0).cumsum(axis=1)
 
-    ### Mask pixels touched by each window, same rounding as window_coverage ###
+    ### Mask pixels touched by each window, at least the one pixel a window falls in ###
     first = np.floor(corners / downsample).astype(np.int64)
     stop = np.maximum(first + 1, np.ceil((corners + window_size) / downsample).astype(np.int64))
     n_touched = np.prod(stop - first, axis=1)  # includes pixels beyond the mask (outside)
@@ -367,7 +281,7 @@ def report_stage(name: str, count: int | None = None) -> None:
         One of "centroids", "persistence", "clustering" or "mds".
 
     count : int | None
-        Number of items the stage works on (e.g. windows to cluster), default None.
+        Number of items the stage works on (e.g. cells to cluster), default None.
 
     Returns
     -------
@@ -382,8 +296,8 @@ class ProgressReporter:
 
     """
     Forwards PHC persistence progress to QuPath at most every PROGRESS_INTERVAL_S seconds,
-    so a large annotation does not flood the pipe with one line per window. Holds the time
-    of the last update as state.
+    so a large annotation does not flood the pipe with one line per cell. Holds the time of
+    the last update as state.
     """
 
     def __init__(self):
@@ -392,15 +306,15 @@ class ProgressReporter:
     def __call__(self, n_done: int, n_total: int) -> None:
 
         """
-        Prints a progress line if enough time has passed, and always for the last window.
+        Prints a progress line if enough time has passed, and always for the last cell.
 
         Parameters
         ----------
         n_done : int
-            Windows finished so far.
+            Cells finished so far.
 
         n_total : int
-            Total number of windows.
+            Total number of cells.
 
         Returns
         -------
@@ -495,8 +409,8 @@ def write_mds_outputs(
         ) -> None:
 
     """
-    Saves the MDS embedding as a CSV and as 2D / 3D publication plots coloured like the
-    QuPath tiles. Never fails the run: each file that cannot be written (missing matplotlib,
+    Saves the MDS embedding as a CSV and as 2D / 3D publication plots in the QuPath cluster
+    colours. Never fails the run: each file that cannot be written (missing matplotlib,
     unwritable folder, ...) produces a warning line instead.
 
     Parameters
@@ -505,7 +419,7 @@ def write_mds_outputs(
         Output of `embed_windows` (keys "index", "mds2", "mds3", "stress_2d", "stress_3d").
 
     embedded_labels : np.ndarray of int - size (m,)
-        Cluster label of each embedded window or cell, in embedding order.
+        Cluster label of each embedded cell, in embedding order.
 
     n_clusters : int
         Number of clusters, for the colour ramp.
@@ -514,7 +428,7 @@ def write_mds_outputs(
         Output path stem; files are "<base>.csv", "<base>_2d.png" and "<base>_3d.png".
 
     csv_columns : tuple[str, ...]
-        CSV header, e.g. CSV_COLUMNS or CELL_CSV_COLUMNS.
+        CSV header, e.g. CELL_CSV_COLUMNS.
 
     csv_rows : list of list - length m
         One CSV row per embedded item, matching `csv_columns`.
@@ -610,21 +524,21 @@ def analyse_vectors(
         ) -> dict:
 
     """
-    Shared second half of both modes: L2 measures, agglomerative clustering (subsample-fitted
-    above --max-clustered, or Delaunay-constrained on all items when `points` is given) and
-    MDS of the kept items' vectors, scattered back to all items so windows or cells that
-    failed the filters get the "excluded" values.
+    Second half of a run: L2 measures, agglomerative clustering (subsample-fitted above
+    --max-clustered, or Delaunay-constrained on all items when `points` is given) and MDS of
+    the kept cells' vectors, scattered back to all cells so cells that failed the filters
+    get the "excluded" values.
 
     Parameters
     ----------
     vectors : np.ndarray of float - size (k, d)
-        Persistence vectors of the kept windows or cells, in the order of `kept`.
+        Persistence vectors of the kept cells, in the order of `kept`.
 
     kept : np.ndarray of int - size (k,)
-        Index of each kept item among all `n_items` items, increasing.
+        Index of each kept cell among all `n_items` cells, increasing.
 
     n_items : int
-        Number of windows or cells reported in the output (N).
+        Number of cells reported in the output (N).
 
     args : argparse.Namespace
         Parsed settings (n_clusters, linkage, max_clustered, max_edge_length, mds,
@@ -683,87 +597,6 @@ def analyse_vectors(
     return analysis
 
 
-def run_windows(args: argparse.Namespace, centroids: np.ndarray, mask: np.ndarray) -> dict:
-
-    """
-    Tiled mode: keeps the windows that lie inside the annotation and hold enough cells, runs
-    alpha complex PHC on them and analyses them (clusters, L2 measures, MDS, plots).
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command line settings.
-
-    centroids : np.ndarray of float - size (n, 2)
-        (x, y) centroid of every usable cell, in slide pixels.
-
-    mask : np.ndarray of bool - size (h, w)
-        Annotation mask, as from `read_mask`.
-
-    Returns
-    -------
-    results : dict
-        The windows-mode output JSON without "elapsed_s" (keys described in the header).
-
-    Raises
-    ------
-    SystemExit
-        If no window passes the filters, or more than --max-clustered windows do.
-    """
-
-    ### Lay out windows and decide which ones to cluster ###
-    localhom = PHC(persistence_type="alpha", window_size=args.window_size, stride=args.stride,
-                   vectorization=args.vectorization, vector_resolution=args.vector_resolution,
-                   dimension=args.dimension, n_jobs=args.n_jobs)
-    grid = localhom.point_window_grid((args.height, args.width))
-    window_pts, n_cells = localhom.window_points(centroids, (args.origin_x, args.origin_y),
-                                                 grid)
-    coverage = window_coverage(mask, grid, args.mask_downsample)
-    inside = (coverage >= args.min_coverage) & (n_cells >= args.min_cells)
-    n_inside = int(inside.sum())
-    if n_inside == 0:
-        sys.exit(f"No window has at least {args.min_coverage:.0%} of its area inside the "
-                 f"annotation and at least {args.min_cells} cells (the most cells in a window "
-                 f"is {int(n_cells.max())}); use a larger window size or a lower minimum.")
-    if n_inside > args.max_clustered:
-        sys.exit(f"{n_inside} windows exceed the clustering limit of {args.max_clustered}; "
-                 "increase the window size or stride.")
-
-    ### Local persistence of the kept windows, vectorized on one shared range ###
-    kept = np.flatnonzero(inside)
-    report_stage("persistence", n_inside)
-    diagrams = localhom.point_diagrams([window_pts[k] for k in kept],
-                                       progress=ProgressReporter())
-    windows = localhom.vectorize_diagrams(diagrams)
-
-    ### Measure, cluster and embed ###
-    analysis = analyse_vectors(windows, kept, len(grid), args)
-    labels = analysis["cluster"]
-    if analysis["embedding"] is not None and args.plot_dir is not None:
-        rows = [[int(i), grid[i][0], grid[i][1], int(labels[i]), *analysis["mds2"][i],
-                 *analysis["mds3"][i]] for i in analysis["embedded_ids"]]
-        write_mds_outputs(analysis["embedding"], labels[analysis["embedded_ids"]],
-                          analysis["n_clusters"],
-                          os.path.join(args.plot_dir, f"{args.plot_prefix}_mds"),
-                          CSV_COLUMNS, rows)
-
-    results = {
-        "mode": "windows",
-        "windows": [{"row": r, "col": c, "height": h, "width": w,
-                     "coverage": float(coverage[i]), "n_cells": int(n_cells[i]),
-                     "l2_norm": float(analysis["l2_norm"][i]),
-                     "l2_to_mean": float(analysis["l2_to_mean"][i]),
-                     "cluster": int(labels[i]), "mds2": analysis["mds2"][i],
-                     "mds3": analysis["mds3"][i]}
-                    for i, (r, c, h, w) in enumerate(grid)],
-        "n_clusters": analysis["n_clusters"],
-        "n_windows_clustered": n_inside,
-        "n_cells": len(centroids),
-        "mds": analysis["mds"],
-    }
-    return results
-
-
 def run_cells(
         args: argparse.Namespace,
         centroids: np.ndarray,
@@ -772,7 +605,7 @@ def run_cells(
         ) -> dict:
 
     """
-    Per-cell mode: centres a --window-size window on every cell, computes the alpha complex
+    Centres a --window-size window on every cell, computes the alpha complex
     persistence of the neighbouring centroids in it (one computation per cell), keeps the
     cells whose window lies inside the annotation and holds enough cells, and analyses them
     (clusters, L2 measures, MDS, plots).
@@ -795,7 +628,7 @@ def run_cells(
     Returns
     -------
     results : dict
-        The cells-mode output JSON without "elapsed_s" (keys described in the header).
+        The output JSON without "elapsed_s" (keys described in the header).
 
     Raises
     ------
@@ -848,7 +681,6 @@ def run_cells(
     has_centroid = np.zeros(n_features, dtype=bool)
     has_centroid[usable] = True
     results = {
-        "mode": "cells",
         "cells": [{"index": i, "id": ids[i],
                    "x": float(centroids[i, 0]) if has_centroid[i] else None,
                    "y": float(centroids[i, 1]) if has_centroid[i] else None,
@@ -876,8 +708,8 @@ def run_cells(
 def main() -> None:
 
     """
-    Reads the cell centroids and the annotation mask, runs the chosen mode (tiled windows
-    or one window per cell) and writes the results as JSON (plus optional plots and CSV).
+    Reads the cell centroids and the annotation mask, runs PHC with one window per cell and
+    writes the results as JSON (plus optional plots and CSV).
 
     Returns
     -------
@@ -886,7 +718,7 @@ def main() -> None:
     Raises
     ------
     SystemExit
-        If the file holds no cells, or the chosen mode finds nothing to cluster.
+        If the file holds no cells, or no cell passes the filters.
     """
 
     args = parse_args()
@@ -900,14 +732,7 @@ def main() -> None:
                  "(Analyze > Cell detection), then run PHC again.")
     mask = read_mask(args.mask)
 
-    if args.mode == "windows":
-        usable = np.all(np.isfinite(centroids), axis=1)
-        results = run_windows(args, centroids[usable], mask)
-    elif args.mode == "cells":
-        results = run_cells(args, centroids, ids, mask)
-    else:
-        raise ValueError(f"Unknown mode {args.mode!r}; expected 'windows' or 'cells'.")
-
+    results = run_cells(args, centroids, ids, mask)
     results["elapsed_s"] = time.perf_counter() - start
     with open(args.output, "w") as out:
         json.dump(results, out)
