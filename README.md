@@ -11,21 +11,21 @@ Check out the corresponding paper at: https://arxiv.org/abs/2507.14378
 ## Repository layout
 
 ```
-PHC/                    the Python library (import PHC)
-├── local_ph.py         PHC class: sliding-window and per-cell persistence
-├── filtrations.py      alpha, lower star, adjacency and cubical filtrations
-├── image_conditioning.py  preprocess class: threshold and dilate images
-├── cells.py            cell centroids from QuPath GeoJSON exports
-├── clustering.py       L2 measures, agglomerative clustering, MDS
-├── spatial.py          clustering restricted to Delaunay neighbours
-├── constrained_linkage.py  optional numba backend for spatial clustering
-├── plotting.py         matplotlib figures
-└── utils.py            shared helpers
-qupath-extension-phc/   QuPath extension that runs PHC on detected cells
-└── dist/             ready-built extension jar (drag onto QuPath)
-experiments/            scripts used for the paper (data generation, training)
-PHC_Tutorial.ipynb      tutorial notebook
-requirements.txt        pinned dependencies of the library, the extension and the tutorial
+PHC/                          the Python library (import PHC)
+├── local_ph.py               PHC class: sliding-window and per-cell persistence
+├── filtrations.py            alpha, lower star, adjacency and cubical filtrations
+├── image_conditioning.py     preprocess class: threshold and dilate images
+├── cells.py                  cell centroids from QuPath GeoJSON exports
+├── clustering.py             L2 measures, agglomerative clustering, MDS
+├── spatial.py                clustering restricted to Delaunay neighbours
+├── constrained_linkage.py    optional numba backend for spatial clustering
+├── plotting.py               matplotlib figures
+└── utils.py                  shared helpers
+qupath-extension-phc/         QuPath extension that runs PHC on detected cells
+└── dist/                     ready-built extension jar (drag onto QuPath)
+experiments/                  scripts used for the paper (data generation, training)
+PHC_Tutorial.ipynb            tutorial notebook
+requirements.txt              pinned dependencies of the library, the extension and the tutorial
 ```
 
 ## Installation
